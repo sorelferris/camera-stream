@@ -2,10 +2,10 @@
 
 Run the server first, then display every camera in a single OpenCV mosaic:
 
-    uv run python example/client.py --config config.demo.yaml
+    uv run python example/client.py --endpoint=tcp://192.168.5.24:5555
 
 Press q or Escape in the OpenCV window to exit. Use --no-display on a headless
-machine; it still subscribes to every configured stream and prints live rates.
+machine; it still subscribes to every discovered stream and prints live rates.
 """
 
 from __future__ import annotations
@@ -17,15 +17,12 @@ import sys
 import time
 from collections import deque
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
 import cv2
 import numpy as np
 import zmq
-
-from camera_stream.config import ServiceConfig, load_config
 
 
 def client_endpoint(endpoint: str) -> str:
@@ -40,18 +37,15 @@ def client_endpoint(endpoint: str) -> str:
     return endpoint if port is None else f"tcp://127.0.0.1:{port}"
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="camera-stream multi-camera client demo"
     )
     parser.add_argument(
-        "--config",
-        type=Path,
-        default=Path("config.yaml"),
-        help="YAML config used to choose cameras and default endpoints",
+        "--endpoint",
+        required=True,
+        help="server stream PUB endpoint, for example tcp://192.168.5.24:5555",
     )
-    parser.add_argument("--stream", help="override the server stream PUB endpoint")
-    parser.add_argument("--status", help="override the server status REP endpoint")
     parser.add_argument(
         "--camera",
         action="append",
@@ -62,69 +56,7 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="do not open an OpenCV window; print statistics only",
     )
-    parser.add_argument(
-        "--status-interval",
-        type=float,
-        default=2.0,
-        help="seconds between status requests",
-    )
-    return parser.parse_args()
-
-
-class StatusClient:
-    def __init__(self, context: zmq.Context, endpoint: str, poller: zmq.Poller) -> None:
-        self.context = context
-        self.endpoint = endpoint
-        self.poller = poller
-        self.socket: zmq.Socket | None = None
-        self.pending = False
-        self.deadline = 0.0
-        self.next_request_at = 0.0
-        self._connect()
-
-    def _connect(self) -> None:
-        if self.socket is not None:
-            self.poller.unregister(self.socket)
-            self.socket.close(0)
-        self.socket = self.context.socket(zmq.REQ)
-        self.socket.setsockopt(zmq.LINGER, 0)
-        self.socket.connect(self.endpoint)
-        self.poller.register(self.socket, zmq.POLLIN)
-        self.pending = False
-
-    def request_if_due(self, now: float, interval: float) -> None:
-        if self.socket is None:
-            return
-        if self.pending:
-            if now >= self.deadline:
-                self._connect()
-            return
-        if now < self.next_request_at:
-            return
-        try:
-            self.socket.send_json({"op": "get_status"}, flags=zmq.DONTWAIT)
-        except zmq.Again:
-            self._connect()
-            return
-        self.pending = True
-        self.deadline = now + max(1.0, interval)
-        self.next_request_at = now + interval
-
-    def receive_if_ready(self, events: dict[zmq.Socket, int]) -> dict[str, Any] | None:
-        if self.socket is None or self.socket not in events:
-            return None
-        try:
-            response = self.socket.recv_json(flags=zmq.DONTWAIT)
-        except (zmq.Again, ValueError):
-            return None
-        self.pending = False
-        return response
-
-    def close(self) -> None:
-        if self.socket is not None:
-            self.poller.unregister(self.socket)
-            self.socket.close(0)
-            self.socket = None
+    return parser.parse_args(argv)
 
 
 @dataclass
@@ -173,29 +105,13 @@ def decode_frame(header: dict[str, Any], payload: bytes) -> np.ndarray:
     raise ValueError(f"unsupported codec: {codec!r}")
 
 
-def status_by_camera(snapshot: dict[str, Any]) -> dict[str, dict[str, Any]]:
-    return {
-        str(camera["name"]): camera
-        for camera in snapshot.get("cameras", [])
-        if "name" in camera
-    }
-
-
-def display_tile(view: CameraView, status: dict[str, Any]) -> np.ndarray:
-    size = (view.target_width, view.target_height)
+def display_tile(view: CameraView, width: int, height: int) -> np.ndarray:
+    size = (width, height)
     if view.image is None:
-        tile = np.full((view.target_height, view.target_width, 3), 36, dtype=np.uint8)
+        tile = np.full((height, width, 3), 36, dtype=np.uint8)
     else:
         tile = cv2.resize(view.image, size, interpolation=cv2.INTER_AREA)
-    state = status.get("state", "WAITING")
-    state_color = {
-        "ONLINE": (70, 210, 70),
-        "STARTING": (0, 200, 240),
-        "RECOVERING": (0, 200, 240),
-        "OFFLINE": (60, 60, 235),
-        "CONFIG_ERROR": (60, 60, 235),
-    }.get(state, (180, 180, 180))
-    cv2.rectangle(tile, (0, 0), (view.target_width, 48), (0, 0, 0), thickness=-1)
+    cv2.rectangle(tile, (0, 0), (width, 48), (0, 0, 0), thickness=-1)
     cv2.putText(
         tile,
         view.name,
@@ -208,23 +124,23 @@ def display_tile(view: CameraView, status: dict[str, Any]) -> np.ndarray:
     )
     cv2.putText(
         tile,
-        f"{state}  RX {view.fps(time.monotonic_ns())} fps  seq {view.last_sequence or '-'}",
+        f"RX {view.fps(time.monotonic_ns())} fps  seq {view.last_sequence or '-'}",
         (12, 41),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.45,
-        state_color,
+        (70, 210, 70),
         1,
         cv2.LINE_AA,
     )
     return tile
 
 
-def mosaic(views: list[CameraView], statuses: dict[str, dict[str, Any]]) -> np.ndarray:
+def mosaic(views: list[CameraView]) -> np.ndarray:
     columns = 2 if len(views) > 1 else 1
     rows = math.ceil(len(views) / columns)
     tile_width = max(view.target_width for view in views)
     tile_height = max(view.target_height for view in views)
-    tiles = [display_tile(view, statuses.get(view.name, {})) for view in views]
+    tiles = [display_tile(view, tile_width, tile_height) for view in views]
     while len(tiles) < rows * columns:
         tiles.append(np.zeros((tile_height, tile_width, 3), dtype=np.uint8))
     return np.vstack(
@@ -235,63 +151,25 @@ def mosaic(views: list[CameraView], statuses: dict[str, dict[str, Any]]) -> np.n
     )
 
 
-def selected_cameras(config: ServiceConfig, requested: list[str] | None) -> list[str]:
-    known = {camera.name for camera in config.cameras}
-    names = requested or [camera.name for camera in config.cameras]
-    unknown = set(names) - known
-    if unknown:
-        raise ValueError(f"unknown cameras: {', '.join(sorted(unknown))}")
-    return names
-
-
 def main() -> int:
     args = parse_args()
-    if args.status_interval <= 0:
-        print("--status-interval must be positive", file=sys.stderr)
-        return 2
-    try:
-        config = load_config(args.config)
-        names = selected_cameras(config, args.camera)
-    except Exception as exc:  # noqa: BLE001 - demo must report config validation errors
-        print(f"configuration error: {exc}", file=sys.stderr)
-        return 2
-
-    camera_config = {camera.name: camera for camera in config.cameras}
-    views = [
-        CameraView(
-            name, camera_config[name].profile.width, camera_config[name].profile.height
-        )
-        for name in names
-    ]
-    views_by_name = {view.name: view for view in views}
-    stream_endpoint = client_endpoint(args.stream or config.endpoints.stream_pub)
-    status_endpoint = client_endpoint(args.status or config.endpoints.status_rep)
+    requested = set(args.camera or [])
+    views: list[CameraView] = []
+    views_by_name: dict[str, CameraView] = {}
+    stream_endpoint = client_endpoint(args.endpoint)
     context = zmq.Context()
     stream = context.socket(zmq.SUB)
     stream.setsockopt(zmq.RCVHWM, 1)
     stream.setsockopt(zmq.LINGER, 0)
     stream.connect(stream_endpoint)
-    for name in names:
-        stream.setsockopt_string(zmq.SUBSCRIBE, f"{name}/color")
+    stream.setsockopt_string(zmq.SUBSCRIBE, "")
     poller = zmq.Poller()
     poller.register(stream, zmq.POLLIN)
-    status_client = StatusClient(context, status_endpoint, poller)
     last_report = time.monotonic()
-    latest_status: dict[str, Any] = {}
-    print(
-        f"subscribed to {', '.join(f'{name}/color' for name in names)} via {stream_endpoint}"
-    )
+    print(f"subscribed to all camera streams via {stream_endpoint}")
     try:
         while True:
-            now = time.monotonic()
-            status_client.request_if_due(now, args.status_interval)
             events = dict(poller.poll(50))
-            status = status_client.receive_if_ready(events)
-            if status is not None:
-                latest_status = status
-                if "error" in status:
-                    print(f"status error: {status['error']}", file=sys.stderr)
-
             if stream in events:
                 while True:
                     try:
@@ -303,7 +181,18 @@ def main() -> int:
                     try:
                         header = json.loads(parts[1].decode("utf-8"))
                         name = str(header["camera"])
-                        view = views_by_name[name]
+                        if requested and name not in requested:
+                            continue
+                        view = views_by_name.get(name)
+                        if view is None:
+                            view = CameraView(
+                                name=name,
+                                target_width=int(header["width"]),
+                                target_height=int(header["height"]),
+                            )
+                            views_by_name[name] = view
+                            views.append(view)
+                            print(f"discovered {name}/color")
                         view.record(
                             decode_frame(header, parts[2]), header, len(parts[2])
                         )
@@ -316,9 +205,11 @@ def main() -> int:
                     ) as exc:
                         print(f"invalid frame: {exc}", file=sys.stderr)
 
-            statuses = status_by_camera(latest_status)
-            if not args.no_display:
-                cv2.imshow("camera-stream client", mosaic(views, statuses))
+            if not args.no_display and views:
+                cv2.imshow(
+                    "camera-stream client",
+                    mosaic(sorted(views, key=lambda view: view.name)),
+                )
                 key = cv2.waitKey(1) & 0xFF
                 if key in (27, ord("q")):
                     break
@@ -327,12 +218,11 @@ def main() -> int:
             if now - last_report >= 1.0:
                 now_ns = time.monotonic_ns()
                 reports = []
-                for view in views:
-                    status = statuses.get(view.name, {})
+                for view in sorted(views, key=lambda view: view.name):
                     rate = view.bytes_since_report / max(now - last_report, 1e-6) / 1024
                     reports.append(
-                        f"{view.name}: {status.get('state', 'WAITING')} "
-                        f"rx={view.fps(now_ns)}fps {rate:.0f}KiB/s seq={view.last_sequence or '-'}"
+                        f"{view.name}: rx={view.fps(now_ns)}fps "
+                        f"{rate:.0f}KiB/s seq={view.last_sequence or '-'}"
                     )
                     view.bytes_since_report = 0
                 print(" | ".join(reports))
@@ -342,7 +232,6 @@ def main() -> int:
     finally:
         if not args.no_display:
             cv2.destroyAllWindows()
-        status_client.close()
         poller.unregister(stream)
         stream.close(0)
         context.term()

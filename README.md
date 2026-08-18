@@ -13,22 +13,23 @@ uv sync --extra realsense --extra orbbec
 uv run camera-stream --config config.yaml
 ```
 
-The minimal Python client demo subscribes to one color stream, decodes the
-multipart payload and displays it with OpenCV:
+The Python client demo needs only the server PUB endpoint. It discovers camera
+names and image dimensions from frame headers, then displays every discovered
+color stream in an OpenCV mosaic:
 
 ```bash
-uv run python example/client.py --camera head_camera
+uv run python example/client.py --endpoint=tcp://127.0.0.1:5555
 # Headless statistics-only mode
-uv run python example/client.py --camera head_camera --no-display
+uv run python example/client.py --endpoint=tcp://127.0.0.1:5555 --no-display
 ```
 
 For the three V4L2 devices available on this machine, use the ready-to-run
-demo configuration. The client subscribes to all configured camera topics and
-shows them in a single 2-column mosaic window:
+demo configuration. The client discovers all camera topics and shows them in a
+single 2-column mosaic window:
 
 ```bash
 uv run camera-stream --config config.demo.yaml --tui
-uv run python example/client.py --config config.demo.yaml
+uv run python example/client.py --endpoint=tcp://127.0.0.1:5555
 ```
 
 Pass `--tui` to render a Rich dashboard in the same server process. The
