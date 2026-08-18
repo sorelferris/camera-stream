@@ -14,6 +14,7 @@ from typing import Any
 import zmq
 
 from camera_stream.config import CameraConfig, ServiceConfig
+from camera_stream.dashboard import Dashboard
 from camera_stream.protocol import json_bytes
 from camera_stream.worker import run_worker
 
@@ -88,6 +89,7 @@ class Supervisor:
             "publish_fps": 0,
             "dropped_before_encode": 0,
             "dropped_ipc": 0,
+            "dropped_pub": 0,
             "reconnect_attempt": 0,
             "last_error": None,
             "pid": None,
@@ -206,6 +208,7 @@ class Supervisor:
         try:
             self.stream_pub.send_multipart([topic, header, payload], flags=zmq.DONTWAIT)
         except zmq.Again:
+            record.status["dropped_pub"] += 1
             return
         now_ns = time.monotonic_ns()
         previous = record.status.get("last_published_ns", 0)
@@ -228,6 +231,10 @@ class Supervisor:
             ),
             "cameras": [dict(record.status) for record in self.records.values()],
         }
+
+    def status_snapshot(self) -> dict[str, Any]:
+        """Return the current in-process status for the REP API and dashboard."""
+        return self._status_snapshot()
 
     def _handle_status(self) -> None:
         try:
@@ -273,9 +280,12 @@ class Supervisor:
             ):
                 self._set_state(record, "OFFLINE", error="worker heartbeat timeout")
 
-    def run(self) -> None:
+    def run(self, *, tui: bool = False) -> None:
         self.start_workers()
+        dashboard = Dashboard(self) if tui else None
         try:
+            if dashboard is not None:
+                dashboard.start()
             while not self.stop_requested:
                 events = dict(self.poller.poll(100))
                 if self.frame_pull in events:
@@ -285,7 +295,11 @@ class Supervisor:
                 if self.status_rep in events:
                     self._handle_status()
                 self._monitor_workers()
+                if dashboard is not None:
+                    dashboard.update()
         finally:
+            if dashboard is not None:
+                dashboard.stop()
             self.shutdown()
 
     def shutdown(self) -> None:

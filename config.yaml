@@ -1,40 +1,40 @@
 endpoints:
-  stream_pub: "tcp://0.0.0.0:5555"
-  status_rep: "tcp://0.0.0.0:5556"
+  stream_pub: 'tcp://0.0.0.0:5555'
+  status_rep: 'tcp://0.0.0.0:5556'
 
 cameras:
-  - name: "hand_camera"
-    driver: "realsense"
+  - name: 'hand_camera'
+    driver: 'realsense'
     device:
-      serial: "254343062015"
+      serial: '347522072196'
     profile:
       width: 640
       height: 480
       fps: 30
     encoding:
-      codec: "jpeg"
+      codec: 'jpeg'
       jpeg_quality: 85
 
-  - name: "side_camera"
-    driver: "orbbec"
+  - name: 'side_camera'
+    driver: 'orbbec'
     device:
-      serial: "CH82C5200YG"
+      serial: 'CH82C5200YG'
     profile:
       width: 640
       height: 480
       fps: 30
     encoding:
-      codec: "jpeg"
+      codec: 'jpeg'
       jpeg_quality: 85
 
-  - name: "head_camera"
-    driver: "opencv"
+  - name: 'head_camera'
+    driver: 'opencv'
     device:
-      path: "/dev/v4l/by-id/usb-SHENZHEN_AONI_ELECTRONIC_CO._LTD_aoni_webcam_A30_20191119001-video-index0"
+      path: '/dev/v4l/by-id/usb-SHENZHEN_AONI_ELECTRONIC_CO._LTD_aoni_webcam_A30_20191119001-video-index0'
     profile:
       width: 640
       height: 480
       fps: 30
     encoding:
-      codec: "jpeg"
+      codec: 'jpeg'
       jpeg_quality: 85

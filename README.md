@@ -27,23 +27,18 @@ demo configuration. The client subscribes to all configured camera topics and
 shows them in a single 2-column mosaic window:
 
 ```bash
-uv run camera-stream --config config.demo.yaml
+uv run camera-stream --config config.demo.yaml --tui
 uv run python example/client.py --config config.demo.yaml
 ```
 
-In another terminal, run the Rich telemetry TUI:
+Pass `--tui` to render a Rich dashboard in the same server process. The
+dashboard reads supervisor state directly, so it does not create a second
+status client or compete for either endpoint. Without `--tui`, the service
+remains headless and suitable for systemd.
 
 ```bash
-uv run camera-stream-tui --config config.yaml
+uv run camera-stream --config config.yaml --tui
 ```
-
-Use `--once` for a single non-interactive snapshot. The TUI subscribes to the
-same stream endpoint, so its `TUI FPS`, frame age, payload size and sequence
-gaps describe the client-side flow; service-side capture/publish rates and
-drop counters come from `status_rep`. Frame age uses UTC timestamps and is most
-accurate when the TUI host clock is synchronized with the streaming host.
-Before a status snapshot arrives, the TUI shows `WAITING` and marks the status
-endpoint as disconnected rather than reporting a misleading camera state.
 
 `stream_pub` publishes camera frames as three-part ZeroMQ messages:
 

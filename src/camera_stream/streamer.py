@@ -16,6 +16,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--config", type=Path, required=True, help="YAML service configuration"
     )
+    parser.add_argument(
+        "--tui", action="store_true", help="show the in-process Rich server dashboard"
+    )
     return parser
 
 
@@ -31,7 +34,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     supervisor = Supervisor(config)
     install_signal_handlers(supervisor)
-    supervisor.run()
+    supervisor.run(tui=args.tui)
     return 0
 
 

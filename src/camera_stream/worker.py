@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import queue
+import signal
 import threading
 import time
 from collections import deque
@@ -191,6 +192,8 @@ def _send_control(socket: zmq.Socket, message: dict[str, Any]) -> None:
 def run_worker(
     config_data: dict[str, Any], frame_endpoint: str, control_endpoint: str, stop: Any
 ) -> None:
+    # The supervisor owns terminal signals and shuts workers down through stop.
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
     config = CameraConfig.model_validate(config_data)
     context = zmq.Context()
     data_socket = context.socket(zmq.PUSH)
