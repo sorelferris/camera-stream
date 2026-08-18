@@ -7,6 +7,7 @@ import shutil
 import signal
 import tempfile
 import time
+from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -17,6 +18,8 @@ from camera_stream.config import CameraConfig, ServiceConfig
 from camera_stream.dashboard import Dashboard
 from camera_stream.protocol import json_bytes
 from camera_stream.worker import run_worker
+
+RECOVERY_WATCHDOG_TIMEOUT_NS = 10_000_000_000
 
 
 @dataclass
@@ -38,6 +41,8 @@ class Supervisor:
         self._shutdown_complete = False
         self.status_revision = 0
         self.started_monotonic_ns = time.monotonic_ns()
+        self.published_frames: deque[int] = deque(maxlen=240)
+        self.last_publish_latency_ms: float | None = None
         self.runtime_dir = Path(tempfile.mkdtemp(prefix="camera-stream-"))
         os.chmod(self.runtime_dir, 0o700)
         self.frame_endpoint = f"ipc://{self.runtime_dir / 'frames.sock'}"
@@ -84,6 +89,7 @@ class Supervisor:
             "last_capture_monotonic_ns": 0,
             "last_capture_utc_ns": 0,
             "last_published_ns": 0,
+            "last_capture_to_publish_ms": None,
             "last_sequence": 0,
             "capture_fps": 0,
             "publish_fps": 0,
@@ -211,15 +217,30 @@ class Supervisor:
             record.status["dropped_pub"] += 1
             return
         now_ns = time.monotonic_ns()
+        now_utc_ns = time.time_ns()
         previous = record.status.get("last_published_ns", 0)
         record.status["last_published_ns"] = now_ns
         record.status["last_sequence"] = frame.get("sequence", 0)
+        captured_utc_ns = int(frame.get("captured_utc_ns", 0))
+        if captured_utc_ns:
+            latency_ms = max(0.0, (now_utc_ns - captured_utc_ns) / 1_000_000)
+            record.status["last_capture_to_publish_ms"] = round(latency_ms, 2)
+            self.last_publish_latency_ms = round(latency_ms, 2)
+        self.published_frames.append(now_ns)
+        cutoff = now_ns - 1_000_000_000
+        while self.published_frames and self.published_frames[0] < cutoff:
+            self.published_frames.popleft()
         if previous:
             delta = now_ns - previous
             if delta > 0:
                 record.status["publish_fps"] = round(1_000_000_000 / delta, 2)
 
     def _status_snapshot(self) -> dict[str, Any]:
+        now_ns = time.monotonic_ns()
+        while (
+            self.published_frames and self.published_frames[0] < now_ns - 1_000_000_000
+        ):
+            self.published_frames.popleft()
         return {
             "schema_version": 1,
             "server_time_ns": time.time_ns(),
@@ -229,6 +250,13 @@ class Supervisor:
                 (time.monotonic_ns() - self.started_monotonic_ns) / 1_000_000_000,
                 3,
             ),
+            "service": {
+                "worker_count": len(self.records),
+                "aggregate_publish_fps": len(self.published_frames),
+                "last_publish_latency_ms": self.last_publish_latency_ms,
+                "stream_pub": self.config.endpoints.stream_pub,
+                "status_rep": self.config.endpoints.status_rep,
+            },
             "cameras": [dict(record.status) for record in self.records.values()],
         }
 
@@ -253,6 +281,7 @@ class Supervisor:
 
     def _monitor_workers(self) -> None:
         now_seconds = time.monotonic()
+        now_ns = time.monotonic_ns()
         for record in self.records.values():
             process = record.process
             if process is None:
@@ -274,11 +303,34 @@ class Supervisor:
                 )
                 self._start_worker(record)
             elif (
+                record.status.get("state") in {"OFFLINE", "RECOVERING"}
+                and now_ns - record.status.get("state_since_monotonic_ns", now_ns)
+                > RECOVERY_WATCHDOG_TIMEOUT_NS
+            ):
+                self._restart_stuck_worker(record)
+            elif (
                 record.status.get("last_heartbeat_ns")
-                and time.monotonic_ns() - record.status["last_heartbeat_ns"]
-                > 5_000_000_000
+                and now_ns - record.status["last_heartbeat_ns"] > 5_000_000_000
             ):
                 self._set_state(record, "OFFLINE", error="worker heartbeat timeout")
+
+    def _restart_stuck_worker(self, record: WorkerRecord) -> None:
+        process = record.process
+        if process is None:
+            return
+        record.stop.set()
+        process.join(timeout=1.0)
+        if process.is_alive():
+            process.terminate()
+            process.join(timeout=1.0)
+        record.restart_attempt += 1
+        self._set_state(
+            record,
+            "RECOVERING",
+            error="worker recovery watchdog restart",
+            attempt=record.restart_attempt,
+        )
+        self._start_worker(record)
 
     def run(self, *, tui: bool = False) -> None:
         self.start_workers()

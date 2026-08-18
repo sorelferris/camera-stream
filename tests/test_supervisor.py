@@ -6,8 +6,22 @@ from camera_stream.config import ServiceConfig
 from camera_stream.supervisor import Supervisor
 
 
-def test_first_capture_updates_status_without_waiting_for_heartbeat() -> None:
-    config = ServiceConfig.model_validate(
+class StuckWorkerProcess:
+    def __init__(self) -> None:
+        self.terminated = False
+
+    def is_alive(self) -> bool:
+        return not self.terminated
+
+    def join(self, timeout: float | None = None) -> None:
+        return None
+
+    def terminate(self) -> None:
+        self.terminated = True
+
+
+def service_config() -> ServiceConfig:
+    return ServiceConfig.model_validate(
         {
             "endpoints": {
                 "stream_pub": "tcp://127.0.0.1:*",
@@ -24,7 +38,10 @@ def test_first_capture_updates_status_without_waiting_for_heartbeat() -> None:
             ],
         }
     )
-    supervisor = Supervisor(config)
+
+
+def test_first_capture_updates_status_without_waiting_for_heartbeat() -> None:
+    supervisor = Supervisor(service_config())
     context = zmq.Context()
     worker = context.socket(zmq.DEALER)
     worker.connect(supervisor.control_endpoint)
@@ -48,4 +65,26 @@ def test_first_capture_updates_status_without_waiting_for_heartbeat() -> None:
     finally:
         worker.close(0)
         context.term()
+        supervisor.shutdown()
+
+
+def test_monitor_restarts_a_worker_stuck_offline(monkeypatch) -> None:
+    supervisor = Supervisor(service_config())
+    process = StuckWorkerProcess()
+    record = supervisor.records["cam"]
+    record.process = process
+    record.status.update(
+        {
+            "state": "OFFLINE",
+            "state_since_monotonic_ns": time.monotonic_ns() - 11_000_000_000,
+            "last_heartbeat_ns": time.monotonic_ns(),
+        }
+    )
+    restarts = []
+    monkeypatch.setattr(supervisor, "_start_worker", restarts.append)
+    try:
+        supervisor._monitor_workers()
+        assert process.terminated
+        assert restarts == [record]
+    finally:
         supervisor.shutdown()

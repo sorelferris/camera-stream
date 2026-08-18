@@ -32,7 +32,8 @@ def test_dashboard_renders_in_process_status() -> None:
             Dashboard(supervisor).render()
         )
         assert "cam" in output.getvalue()
-        assert "640x480@30" in output.getvalue()
-        assert "jpeg/85" in output.getvalue()
+        assert "SUPERVISOR / AGGREGATE" in output.getvalue()
+        assert "EXTERNAL SERVICE" in output.getvalue()
+        assert "Capture -> PUB" in output.getvalue()
     finally:
         supervisor.shutdown()
