@@ -3,7 +3,7 @@ endpoints:
   status_rep: 'tcp://0.0.0.0:5556'
 
 cameras:
-  - name: 'hand_camera'
+  - name: 'base_camera'
     driver: 'realsense'
     device:
       serial: '347522072196'
@@ -15,10 +15,10 @@ cameras:
       codec: 'jpeg'
       jpeg_quality: 85
 
-  - name: 'side_camera'
-    driver: 'orbbec'
+  - name: 'hand_camera'
+    driver: 'opencv'
     device:
-      serial: 'CH82C5200YG'
+      path: '/dev/v4l/by-id/usb-Sonix_Technology_Co.__Ltd._Orbbec_DaBai_DCW2_RGB_Camera_CH82C5200YG-video-index0'
     profile:
       width: 640
       height: 480
@@ -27,7 +27,7 @@ cameras:
       codec: 'jpeg'
       jpeg_quality: 85
 
-  - name: 'head_camera'
+  - name: 'side_camera'
     driver: 'opencv'
     device:
       path: '/dev/v4l/by-id/usb-SHENZHEN_AONI_ELECTRONIC_CO._LTD_aoni_webcam_A30_20191119001-video-index0'
