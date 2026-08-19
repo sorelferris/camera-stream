@@ -1,3 +1,4 @@
+import socket
 import time
 
 import zmq
@@ -88,3 +89,50 @@ def test_monitor_restarts_a_worker_stuck_offline(monkeypatch) -> None:
         assert restarts == [record]
     finally:
         supervisor.shutdown()
+
+
+def test_status_snapshot_includes_connected_pub_clients() -> None:
+    supervisor = Supervisor(service_config())
+    supervisor.clients[17] = {
+        "ip": "192.168.5.21",
+        "port": 54321,
+        "fd": 17,
+        "endpoint": "tcp://0.0.0.0:5555",
+        "connected_monotonic_ns": time.monotonic_ns() - 2_000_000_000,
+    }
+    supervisor._record_published_bytes(time.monotonic_ns(), 125_000)
+    try:
+        snapshot = supervisor.status_snapshot()
+        clients = snapshot["clients"]
+        assert clients[0]["ip"] == "192.168.5.21"
+        assert clients[0]["port"] == 54321
+        assert clients[0]["available_streams"] == 1
+        assert clients[0]["codecs"] == "JPEG"
+        assert clients[0]["fd"] == 17
+        assert clients[0]["connected_s"] >= 2
+        assert clients[0]["estimated_bitrate_mbps"] == 1
+        assert snapshot["service"]["stream_bitrate_mbps"] == 1
+        assert snapshot["service"]["estimated_egress_mbps"] == 1
+    finally:
+        supervisor.shutdown()
+
+
+def test_client_ip_reads_tcp_peer_address() -> None:
+    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    listener.bind(("127.0.0.1", 0))
+    listener.listen()
+    client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        client.connect(listener.getsockname())
+        connection, _ = listener.accept()
+        try:
+            assert Supervisor._client_peer(connection.fileno())[0] == "127.0.0.1"
+            assert (
+                Supervisor._client_peer(connection.fileno())[1]
+                == client.getsockname()[1]
+            )
+        finally:
+            connection.close()
+    finally:
+        client.close()
+        listener.close()

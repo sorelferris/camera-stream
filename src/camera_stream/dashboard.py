@@ -3,7 +3,7 @@ from __future__ import annotations
 import time
 from typing import Any
 
-from rich import box
+from rich.align import Align
 from rich.console import Group, RenderableType
 from rich.live import Live
 from rich.panel import Panel
@@ -13,6 +13,8 @@ from rich.text import Text
 
 class Dashboard:
     """Rich dashboard rendered from the in-process supervisor state."""
+
+    _ARROW_COLUMN_WIDTH = 13
 
     def __init__(self, supervisor: Any, *, refresh_per_second: float = 4.0) -> None:
         self.supervisor = supervisor
@@ -24,43 +26,61 @@ class Dashboard:
         snapshot = self.supervisor.status_snapshot()
         statuses = {item["name"]: item for item in snapshot["cameras"]}
         service = snapshot.get("service", {})
-        header = Text("CAMERA STREAM  •  SERVER TOPOLOGY", style="bold cyan")
-        header.append(
-            f"  revision {snapshot['status_revision']}"
-            f"  uptime {snapshot['service_uptime_s']:.1f}s"
-            f"  aggregate {service.get('aggregate_publish_fps', 0)} fps",
-            style="dim",
-        )
+        clients = snapshot.get("clients", [])
 
-        topology = Table.grid(expand=True, padding=(0, 1))
-        topology.add_column(ratio=3)
-        topology.add_column(width=12, justify="center")
-        topology.add_column(ratio=2)
-        topology.add_column(width=12, justify="center")
-        topology.add_column(ratio=2)
-        topology.add_row(
-            self._camera_nodes(statuses),
-            Text("IPC\nPUSH -> PULL\n>>>", style="bold cyan", justify="center"),
-            self._supervisor_node(snapshot, service),
-            Text("ZeroMQ\nPUB / REP\n>>>", style="bold cyan", justify="center"),
-            self._service_node(snapshot, service),
-        )
+        topology = Table.grid(padding=(0, 0))
+        topology.add_column()
+        topology.add_column(width=self._ARROW_COLUMN_WIDTH, justify="center")
+        topology.add_column()
+        topology.add_column(width=self._ARROW_COLUMN_WIDTH, justify="center")
+        topology.add_column()
+        if clients:
+            topology.add_column(width=self._ARROW_COLUMN_WIDTH, justify="center")
+            topology.add_column()
 
-        metrics = self._metrics_table(statuses)
-        return Group(
-            Panel(header, border_style="cyan"),
+        row: list[RenderableType] = [
+            Align(self._camera_nodes(statuses), vertical="middle"),
+            self._arrow("IPC", " PUSH / PULL "),
+            Align(self._supervisor_node(service), vertical="middle"),
+            self._arrow("ZeroMQ ", "PUB / REP"),
+            Align(self._service_node(service), vertical="middle"),
+        ]
+        if clients:
+            row.extend(
+                [
+                    self._arrow("PUB", "SUB"),
+                    Align(self._client_nodes(clients), vertical="middle"),
+                ]
+            )
+        topology.add_row(*row)
+
+        return Align.center(
             Panel(
-                topology, title="Capture -> aggregate -> service", border_style="blue"
-            ),
-            Panel(metrics, title="Per-camera performance", border_style="green"),
+                topology,
+                # title=f"CAMERA STREAM  •  revision {snapshot['status_revision']}",
+                title="CAMERA STREAM",
+                subtitle=f"uptime {self._format_uptime(snapshot['service_uptime_s'])}",
+                border_style="blue",
+                expand=False,
+                padding=(0, 0),
+            )
+        )
+
+    @staticmethod
+    def _arrow(top: str, bottom: str) -> Align:
+        return Align(
+            Text(f"{top}\n>>>>>>\n{bottom}", style="bold cyan", justify="center"),
+            align="center",
+            vertical="middle",
         )
 
     def _camera_nodes(self, statuses: dict[str, dict[str, Any]]) -> RenderableType:
-        nodes = [
-            self._camera_node(camera, statuses[camera.name])
-            for camera in self.supervisor.config.cameras
-        ]
-        return Group(*nodes)
+        return Group(
+            *[
+                self._camera_node(camera, statuses[camera.name])
+                for camera in self.supervisor.config.cameras
+            ]
+        )
 
     def _camera_node(self, camera: Any, status: dict[str, Any]) -> Panel:
         state = str(status["state"])
@@ -71,18 +91,18 @@ class Dashboard:
             f" @{camera.profile.fps}\n",
             style="dim",
         )
-        details.append(f"capture  {status['capture_fps']:.1f} fps\n", style="green")
-        details.append(
-            f"age      {self._milliseconds(self._capture_age_ms(status))}\n",
-            style="dim",
-        )
+        details.append(f"capture  {self._fps(status['capture_fps'])}\n", style="green")
         details.append(
             f"to pub   {self._milliseconds(status['last_capture_to_publish_ms'])}\n",
             style="cyan",
         )
+        details.append(
+            f"ipc      {self._cost_milliseconds(status.get('ipc_cost_ms'))}\n",
+            style="dim",
+        )
         details.append("drops    ", style="dim")
         details.append(
-            f"slot {status['dropped_before_encode']}  " f"ipc {status['dropped_ipc']}",
+            f"slot {status['dropped_before_encode']}  ipc {status['dropped_ipc']}",
             style=self._drop_style(
                 int(status["dropped_before_encode"]) + int(status["dropped_ipc"])
             ),
@@ -92,85 +112,74 @@ class Dashboard:
         return Panel(
             details,
             title=f"{camera.name}  [{state}]",
-            title_align="left",
+            subtitle=f"cost {self._cost_milliseconds(self._camera_cost_ms(status))}",
             border_style=state_style,
             padding=(0, 1),
         )
 
-    def _supervisor_node(
-        self, snapshot: dict[str, Any], service: dict[str, Any]
-    ) -> Panel:
+    def _supervisor_node(self, service: dict[str, Any]) -> Panel:
         details = Text()
         details.append("frame PULL  HWM: 1\n", style="bold magenta")
         details.append("control ROUTER\n", style="dim")
-        details.append(f"workers      {service.get('worker_count', 0)}\n")
-        details.append(
-            f"aggregate    {service.get('aggregate_publish_fps', 0)} fps\n",
-            style="green",
-        )
-        details.append(
-            "last to pub  "
-            f"{self._milliseconds(service.get('last_publish_latency_ms'))}\n",
-            style="cyan",
-        )
-        details.append(f"revision     {snapshot['status_revision']}", style="dim")
+        details.append(f"workers      {service.get('worker_count', 0)}")
         return Panel(
             details,
-            title="SUPERVISOR / AGGREGATE",
-            title_align="left",
+            title="SUPERVISOR",
+            subtitle=f"cost {self._cost_milliseconds(service.get('last_supervisor_cost_ms'))}",
             border_style="magenta",
             padding=(0, 1),
         )
 
-    def _service_node(self, snapshot: dict[str, Any], service: dict[str, Any]) -> Panel:
+    def _service_node(self, service: dict[str, Any]) -> Panel:
         details = Text()
-        details.append("stream PUB\n", style="bold green")
-        details.append(f"{service.get('stream_pub', '-')}\n", style="dim")
-        details.append("status REP\n", style="bold cyan")
-        details.append(f"{service.get('status_rep', '-')}\n", style="dim")
-        details.append(f"uptime {snapshot['service_uptime_s']:.1f}s", style="magenta")
+        details.append(
+            f"PUB  {service.get('stream_pub', '-')}\n",
+            style="green",
+        )
+        details.append(
+            f"REP  {service.get('status_rep', '-')}\n",
+            style="cyan",
+        )
+        details.append(
+            f"rate    {self._megabits(service.get('stream_bitrate_mbps'))}\n",
+            style="bold green",
+        )
+        details.append(
+            f"egress  {self._megabits(service.get('estimated_egress_mbps'))}\n",
+            style="cyan",
+        )
+        details.append(f"clients {service.get('client_count', 0)}", style="dim")
         return Panel(
             details,
-            title="EXTERNAL SERVICE",
-            title_align="left",
+            title="SERVICE",
+            subtitle=f"cost {self._cost_milliseconds(service.get('last_service_cost_ms'))}",
             border_style="green",
             padding=(0, 1),
         )
 
-    def _metrics_table(self, statuses: dict[str, dict[str, Any]]) -> Table:
-        metrics = Table(box=box.SIMPLE_HEAD, expand=True, pad_edge=False)
-        for name in (
-            "Camera",
-            "State",
-            "Capture",
-            "Published",
-            "Capture -> PUB",
-            "Slot drops",
-            "IPC drops",
-            "PUB drops",
-            "Last error",
-        ):
-            metrics.add_column(
-                name,
-                justify=(
-                    "right" if name not in {"Camera", "State", "Last error"} else "left"
-                ),
-            )
-        for camera in self.supervisor.config.cameras:
-            status = statuses[camera.name]
-            state = str(status["state"])
-            metrics.add_row(
-                camera.name,
-                Text(state, style=self._state_style(state)),
-                f"{status['capture_fps']:.1f} fps",
-                f"{status['publish_fps']:.1f} fps",
-                self._milliseconds(status["last_capture_to_publish_ms"]),
-                self._drop_value(int(status["dropped_before_encode"])),
-                self._drop_value(int(status["dropped_ipc"])),
-                self._drop_value(int(status["dropped_pub"])),
-                status["last_error"] or "-",
-            )
-        return metrics
+    def _client_node(self, client: dict[str, Any]) -> Panel:
+        details = Text()
+        details.append(
+            f"streams {client.get('available_streams', '-')} available\n",
+            style="green",
+        )
+        details.append(f"codec   {client.get('codecs', '-')}\n", style="dim")
+        details.append(
+            f"est rx  {self._megabits(client.get('estimated_bitrate_mbps'))}\n",
+            style="cyan",
+        )
+        port = client.get("port") or "-"
+        details.append(f"peer    {port}/TCP", style="dim")
+        return Panel(
+            details,
+            title=client["ip"],
+            subtitle=f"up {self._format_uptime(client['connected_s'])}",
+            border_style="cyan",
+            padding=(0, 1),
+        )
+
+    def _client_nodes(self, clients: list[dict[str, Any]]) -> RenderableType:
+        return Group(*[self._client_node(client) for client in clients])
 
     @staticmethod
     def _state_style(state: str) -> str:
@@ -186,19 +195,35 @@ class Dashboard:
     def _drop_style(value: int) -> str:
         return "red" if value else "green"
 
-    def _drop_value(self, value: int) -> Text:
-        return Text(str(value), style=self._drop_style(value))
+    @staticmethod
+    def _camera_cost_ms(status: dict[str, Any]) -> float | None:
+        value = status.get("capture_cost_ms")
+        return None if value is None else float(value)
 
     @staticmethod
     def _milliseconds(value: float | None) -> str:
-        return "-" if value is None else f"{value:.1f} ms"
+        return "-" if value is None else f"{round(value):.0f} ms"
 
     @staticmethod
-    def _capture_age_ms(status: dict[str, Any]) -> float | None:
-        captured_utc_ns = int(status["last_capture_utc_ns"])
-        if not captured_utc_ns:
-            return None
-        return max(0.0, (time.time_ns() - captured_utc_ns) / 1_000_000)
+    def _cost_milliseconds(value: float | None) -> str:
+        if value is None:
+            return "-"
+        return f"{value:.2f} ms" if value < 1 else f"{round(value):.0f} ms"
+
+    @staticmethod
+    def _fps(value: float) -> str:
+        return f"{round(value):.0f} fps"
+
+    @staticmethod
+    def _megabits(value: float | None) -> str:
+        return "-" if value is None else f"{round(value):.0f} Mbps"
+
+    @staticmethod
+    def _format_uptime(value: float) -> str:
+        total_seconds = max(0, round(value))
+        hours, remainder = divmod(total_seconds, 3600)
+        minutes, seconds = divmod(remainder, 60)
+        return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
 
     def start(self) -> None:
         self.live = Live(

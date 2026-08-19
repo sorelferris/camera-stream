@@ -28,6 +28,11 @@ dev = [
 [tool.uv]
 index-url = "https://pypi.org/simple"
 
+[tool.uv.workspace]
+members = [
+    "example/client",
+]
+
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"

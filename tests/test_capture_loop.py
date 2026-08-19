@@ -6,7 +6,7 @@ import numpy as np
 
 from camera_stream.config import CameraConfig
 from camera_stream.drivers.base import CameraUnavailable
-from camera_stream.worker import CaptureLoop, LatestFrameSlot
+from camera_stream.worker import CaptureLoop, LatestFrameSlot, WorkerMetrics
 
 
 class FakeDriver:
@@ -63,3 +63,12 @@ def test_capture_loop_reports_disconnect_and_keeps_latest_frame(monkeypatch) -> 
     frame = slot.take(0)
     assert frame is not None
     assert int(frame.image[0, 0, 0]) == 3
+
+
+def test_worker_metrics_track_processing_costs() -> None:
+    metrics = WorkerMetrics()
+    metrics.captured(100, 200, 4.25)
+    metrics.ipc_ok(1.75)
+    snapshot = metrics.snapshot()
+    assert snapshot["capture_cost_ms"] == 4.25
+    assert snapshot["ipc_cost_ms"] == 1.75

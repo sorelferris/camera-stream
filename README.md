@@ -41,6 +41,69 @@ remains headless and suitable for systemd.
 uv run camera-stream --config config.yaml --tui
 ```
 
+## Architecture
+
+The server is one `camera-stream` process with two logical data-plane stages:
+the Supervisor aggregates frames from spawned camera workers, then the Service
+publishes the live stream and exposes status. The TUI reads the same in-process
+snapshot and does not create another ZeroMQ client.
+
+```mermaid
+flowchart LR
+    Config["config.yaml\nexplicit stream_pub + status_rep"]
+
+    subgraph Workers["spawn camera workers"]
+        W1["Camera worker\nOpenCV / RealSense / Orbbec"]
+        Driver["driver.read()\nlatest-frame slot"]
+        Encode["JPEG or raw_bgr8\nPUSH HWM 1"]
+        W1 --> Driver --> Encode
+    end
+
+    subgraph Server["camera-stream server process"]
+        Supervisor["SUPERVISOR\nIPC PULL HWM 1\ncontrol ROUTER"]
+        Service["SERVICE\nPUB SNDHWM 1\nstatus REP"]
+        TUI["Rich TUI\n--tui\nin-process snapshot"]
+        Supervisor -. "logical handoff\nper-frame cost" .-> Service
+        Supervisor --> TUI
+        Service --> TUI
+    end
+
+    ClientA["Client A\nSUB"]
+    ClientB["Client B\nSUB"]
+    StatusClient["Status client\nREQ/REP"]
+
+    Config --> Workers
+    Config --> Server
+    Encode -->|"IPC PUSH\nframe header + payload"| Supervisor
+    W1 -. "DEALER control\nhello/state/heartbeat" .-> Supervisor
+    Service -->|"TCP PUB\n<camera>/color\nJPEG / BGR"| ClientA
+    Service --> ClientB
+    Service -->|"TCP REP\nget_status"| StatusClient
+
+    classDef worker fill:#e8f4ea,stroke:#2f7d45,color:#173b21
+    classDef supervisor fill:#f2eafa,stroke:#7b4aa5,color:#321b4d
+    classDef service fill:#e8f0fb,stroke:#3d6ea8,color:#1c3554
+    classDef client fill:#fff4df,stroke:#b47720,color:#4c3210
+    class W1,Driver,Encode worker
+    class Supervisor supervisor
+    class Service,TUI service
+    class ClientA,ClientB,StatusClient client
+```
+
+### Data-flow guarantees
+
+- Every frame path is bounded: the capture slot, IPC PUSH/PULL and PUB socket
+  use capacity-one behavior, so old frames are dropped instead of queued.
+- Camera workers use the `spawn` multiprocessing start method. A worker owns
+  its camera SDK and reports `hello`, state transitions and heartbeat metrics
+  through the internal ROUTER/DEALER control channel.
+- `stream_pub` is a one-to-many ZeroMQ PUB endpoint. Clients subscribe to
+  camera topics without competing for the stream. `status_rep` is a separate
+  endpoint defined in `config.yaml`.
+- The dashboard's `cost` values are processing costs: camera read, Supervisor
+  PULL-to-PUB preparation and local PUB enqueue. Client receive/decode latency
+  and actual client-side drops are not observable from PUB/SUB alone.
+
 `stream_pub` publishes camera frames as three-part ZeroMQ messages:
 
 ```text

@@ -5,6 +5,7 @@ import multiprocessing as mp
 import os
 import shutil
 import signal
+import socket as socket_lib
 import tempfile
 import time
 from collections import deque
@@ -13,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 import zmq
+from zmq.utils.monitor import recv_monitor_message
 
 from camera_stream.config import CameraConfig, ServiceConfig
 from camera_stream.dashboard import Dashboard
@@ -20,6 +22,9 @@ from camera_stream.protocol import json_bytes
 from camera_stream.worker import run_worker
 
 RECOVERY_WATCHDOG_TIMEOUT_NS = 10_000_000_000
+BITRATE_WINDOW_NS = 1_000_000_000
+BITRATE_BUCKET_NS = 100_000_000
+BITRATE_BUCKET_COUNT = BITRATE_WINDOW_NS // BITRATE_BUCKET_NS
 
 
 @dataclass
@@ -41,8 +46,12 @@ class Supervisor:
         self._shutdown_complete = False
         self.status_revision = 0
         self.started_monotonic_ns = time.monotonic_ns()
-        self.published_frames: deque[int] = deque(maxlen=240)
-        self.last_publish_latency_ms: float | None = None
+        self.last_published_frame_ns = 0
+        self.last_service_cost_ms: float | None = None
+        self.last_supervisor_cost_ms: float | None = None
+        self.publish_bitrate_buckets: deque[tuple[int, int]] = deque(
+            maxlen=BITRATE_BUCKET_COUNT
+        )
         self.runtime_dir = Path(tempfile.mkdtemp(prefix="camera-stream-"))
         os.chmod(self.runtime_dir, 0o700)
         self.frame_endpoint = f"ipc://{self.runtime_dir / 'frames.sock'}"
@@ -53,11 +62,15 @@ class Supervisor:
         self.control_router.bind(self.control_endpoint)
         self.stream_pub = self._socket(zmq.PUB, sndhwm=1)
         self.stream_pub.bind(config.endpoints.stream_pub)
+        self.stream_monitor = self.stream_pub.get_monitor_socket(
+            zmq.EVENT_ACCEPTED | zmq.EVENT_DISCONNECTED
+        )
         self.status_rep = self._socket(zmq.REP, rcvhwm=10, sndhwm=10)
         self.status_rep.bind(config.endpoints.status_rep)
         self.poller = zmq.Poller()
         for socket in (self.frame_pull, self.control_router, self.status_rep):
             self.poller.register(socket, zmq.POLLIN)
+        self.poller.register(self.stream_monitor, zmq.POLLIN)
         self.records = {
             camera.name: WorkerRecord(
                 camera,
@@ -66,6 +79,7 @@ class Supervisor:
             )
             for camera in config.cameras
         }
+        self.clients: dict[int, dict[str, Any]] = {}
 
     def _socket(
         self, kind: int, *, rcvhwm: int | None = None, sndhwm: int | None = None
@@ -90,6 +104,8 @@ class Supervisor:
             "last_capture_utc_ns": 0,
             "last_published_ns": 0,
             "last_capture_to_publish_ms": None,
+            "capture_cost_ms": None,
+            "ipc_cost_ms": None,
             "last_sequence": 0,
             "capture_fps": 0,
             "publish_fps": 0,
@@ -195,6 +211,8 @@ class Supervisor:
                     ),
                     "last_capture_utc_ns": metrics.get("last_capture_utc_ns", 0),
                     "capture_fps": metrics.get("capture_fps", 0),
+                    "capture_cost_ms": metrics.get("capture_cost_ms"),
+                    "ipc_cost_ms": metrics.get("ipc_cost_ms"),
                     "dropped_before_encode": metrics.get("dropped_before_encode", 0),
                     "dropped_ipc": metrics.get("ipc_dropped", 0),
                 }
@@ -204,6 +222,7 @@ class Supervisor:
 
     def _publish_frame(self) -> None:
         header, payload = self.frame_pull.recv_multipart()
+        received_ns = time.monotonic_ns()
         try:
             frame = json.loads(header.decode("utf-8"))
             name = frame["camera"]
@@ -211,12 +230,17 @@ class Supervisor:
         except (KeyError, TypeError, UnicodeDecodeError, json.JSONDecodeError):
             return
         topic = f"{name}/color".encode()
+        service_started_ns = time.monotonic_ns()
         try:
             self.stream_pub.send_multipart([topic, header, payload], flags=zmq.DONTWAIT)
         except zmq.Again:
             record.status["dropped_pub"] += 1
             return
         now_ns = time.monotonic_ns()
+        self.last_supervisor_cost_ms = round(
+            (service_started_ns - received_ns) / 1_000_000, 2
+        )
+        self.last_service_cost_ms = round((now_ns - service_started_ns) / 1_000_000, 2)
         now_utc_ns = time.time_ns()
         previous = record.status.get("last_published_ns", 0)
         record.status["last_published_ns"] = now_ns
@@ -225,11 +249,8 @@ class Supervisor:
         if captured_utc_ns:
             latency_ms = max(0.0, (now_utc_ns - captured_utc_ns) / 1_000_000)
             record.status["last_capture_to_publish_ms"] = round(latency_ms, 2)
-            self.last_publish_latency_ms = round(latency_ms, 2)
-        self.published_frames.append(now_ns)
-        cutoff = now_ns - 1_000_000_000
-        while self.published_frames and self.published_frames[0] < cutoff:
-            self.published_frames.popleft()
+        self.last_published_frame_ns = now_ns
+        self._record_published_bytes(now_ns, len(topic) + len(header) + len(payload))
         if previous:
             delta = now_ns - previous
             if delta > 0:
@@ -237,10 +258,25 @@ class Supervisor:
 
     def _status_snapshot(self) -> dict[str, Any]:
         now_ns = time.monotonic_ns()
-        while (
-            self.published_frames and self.published_frames[0] < now_ns - 1_000_000_000
-        ):
-            self.published_frames.popleft()
+        stream_bitrate_mbps = self._stream_bitrate_mbps(now_ns)
+        available_codecs = ", ".join(
+            sorted({camera.encoding.codec.upper() for camera in self.config.cameras})
+        )
+        clients = [
+            {
+                "ip": client["ip"],
+                "port": client.get("port"),
+                "fd": client["fd"],
+                "endpoint": client["endpoint"],
+                "available_streams": len(self.records),
+                "codecs": available_codecs,
+                "connected_s": round(
+                    (now_ns - client["connected_monotonic_ns"]) / 1_000_000_000, 1
+                ),
+                "estimated_bitrate_mbps": stream_bitrate_mbps,
+            }
+            for client in self.clients.values()
+        ]
         return {
             "schema_version": 1,
             "server_time_ns": time.time_ns(),
@@ -252,17 +288,46 @@ class Supervisor:
             ),
             "service": {
                 "worker_count": len(self.records),
-                "aggregate_publish_fps": len(self.published_frames),
-                "last_publish_latency_ms": self.last_publish_latency_ms,
+                "client_count": len(self.clients),
+                "last_service_cost_ms": self.last_service_cost_ms,
+                "last_supervisor_cost_ms": self.last_supervisor_cost_ms,
+                "stream_bitrate_mbps": stream_bitrate_mbps,
+                "estimated_egress_mbps": round(
+                    stream_bitrate_mbps * len(self.clients), 2
+                ),
                 "stream_pub": self.config.endpoints.stream_pub,
                 "status_rep": self.config.endpoints.status_rep,
             },
+            "clients": clients,
             "cameras": [dict(record.status) for record in self.records.values()],
         }
 
     def status_snapshot(self) -> dict[str, Any]:
         """Return the current in-process status for the REP API and dashboard."""
         return self._status_snapshot()
+
+    def _stream_bitrate_mbps(self, now_ns: int) -> float:
+        cutoff_ns = now_ns - BITRATE_WINDOW_NS
+        while (
+            self.publish_bitrate_buckets
+            and self.publish_bitrate_buckets[0][0] < cutoff_ns
+        ):
+            self.publish_bitrate_buckets.popleft()
+        return round(
+            sum(size for _, size in self.publish_bitrate_buckets) * 8 / 1_000_000,
+            2,
+        )
+
+    def _record_published_bytes(self, now_ns: int, size: int) -> None:
+        bucket_start_ns = now_ns - now_ns % BITRATE_BUCKET_NS
+        if (
+            self.publish_bitrate_buckets
+            and self.publish_bitrate_buckets[-1][0] == bucket_start_ns
+        ):
+            _, previous_size = self.publish_bitrate_buckets.pop()
+            self.publish_bitrate_buckets.append((bucket_start_ns, previous_size + size))
+            return
+        self.publish_bitrate_buckets.append((bucket_start_ns, size))
 
     def _handle_status(self) -> None:
         try:
@@ -278,6 +343,41 @@ class Supervisor:
         ) as exc:
             response = {"schema_version": 1, "error": str(exc)}
         self.status_rep.send(json_bytes(response))
+
+    def _handle_stream_monitor(self) -> None:
+        while True:
+            try:
+                message = recv_monitor_message(self.stream_monitor, flags=zmq.DONTWAIT)
+            except zmq.Again:
+                return
+            event = message["event"]
+            fd = int(message["value"])
+            if event == zmq.EVENT_ACCEPTED:
+                ip, port = self._client_peer(fd)
+                self.clients[fd] = {
+                    "ip": ip,
+                    "port": port,
+                    "fd": fd,
+                    "endpoint": message["endpoint"].decode("utf-8", "replace"),
+                    "connected_monotonic_ns": time.monotonic_ns(),
+                }
+            elif event == zmq.EVENT_DISCONNECTED:
+                self.clients.pop(fd, None)
+
+    @staticmethod
+    def _client_peer(fd: int) -> tuple[str, int | None]:
+        try:
+            with socket_lib.socket(fileno=os.dup(fd)) as connection:
+                peer = connection.getpeername()
+        except OSError:
+            return "unknown", None
+        if isinstance(peer, tuple):
+            return str(peer[0]), int(peer[1]) if len(peer) > 1 else None
+        return str(peer), None
+
+    @classmethod
+    def _client_ip(cls, fd: int) -> str:
+        return cls._client_peer(fd)[0]
 
     def _monitor_workers(self) -> None:
         now_seconds = time.monotonic()
@@ -346,6 +446,8 @@ class Supervisor:
                     self._handle_control()
                 if self.status_rep in events:
                     self._handle_status()
+                if self.stream_monitor in events:
+                    self._handle_stream_monitor()
                 self._monitor_workers()
                 if dashboard is not None:
                     dashboard.update()
@@ -381,6 +483,7 @@ class Supervisor:
             self.frame_pull,
         ):
             socket.close(0)
+        self.stream_monitor.close(0)
         self.context.term()
         shutil.rmtree(self.runtime_dir, ignore_errors=True)
         self._shutdown_complete = True

@@ -56,18 +56,22 @@ class WorkerMetrics:
     captures: deque[int] = field(default_factory=lambda: deque(maxlen=240))
     last_capture_monotonic_ns: int = 0
     last_capture_utc_ns: int = 0
+    capture_cost_ms: float | None = None
+    ipc_cost_ms: float | None = None
     ipc_published: int = 0
     ipc_dropped: int = 0
 
-    def captured(self, monotonic_ns: int, utc_ns: int) -> None:
+    def captured(self, monotonic_ns: int, utc_ns: int, capture_cost_ms: float) -> None:
         with self._lock:
             self.captures.append(monotonic_ns)
             self.last_capture_monotonic_ns = monotonic_ns
             self.last_capture_utc_ns = utc_ns
+            self.capture_cost_ms = round(capture_cost_ms, 2)
 
-    def ipc_ok(self) -> None:
+    def ipc_ok(self, cost_ms: float) -> None:
         with self._lock:
             self.ipc_published += 1
+            self.ipc_cost_ms = round(cost_ms, 2)
 
     def ipc_drop(self) -> None:
         with self._lock:
@@ -80,6 +84,8 @@ class WorkerMetrics:
                 self.captures.popleft()
             return {
                 "capture_fps": len(self.captures),
+                "capture_cost_ms": self.capture_cost_ms,
+                "ipc_cost_ms": self.ipc_cost_ms,
                 "last_capture_monotonic_ns": self.last_capture_monotonic_ns,
                 "last_capture_utc_ns": self.last_capture_utc_ns,
                 "ipc_published": self.ipc_published,
@@ -147,10 +153,15 @@ class CaptureLoop:
             first_frame_after_open = True
             try:
                 while not self.stop.is_set():
+                    capture_started_ns = time.monotonic_ns()
                     image = driver.read()
                     monotonic_ns, utc_ns = now()
                     self.slot.put(RawFrame(image, monotonic_ns, utc_ns))
-                    self.metrics.captured(monotonic_ns, utc_ns)
+                    self.metrics.captured(
+                        monotonic_ns,
+                        utc_ns,
+                        (time.monotonic_ns() - capture_started_ns) / 1_000_000,
+                    )
                     if first_frame_after_open:
                         self._event(
                             "state",
@@ -253,6 +264,7 @@ def run_worker(
             frame = slot.take(0.02)
             if frame is None:
                 continue
+            ipc_started_ns = time.monotonic_ns()
             if config.encoding.codec == "jpeg":
                 ok, encoded = cv2.imencode(
                     ".jpg",
@@ -284,7 +296,9 @@ def run_worker(
             )
             try:
                 data_socket.send_multipart([header, payload], flags=zmq.DONTWAIT)
-                capture.metrics.ipc_ok()
+                capture.metrics.ipc_ok(
+                    (time.monotonic_ns() - ipc_started_ns) / 1_000_000
+                )
             except zmq.Again:
                 capture.metrics.ipc_drop()
     finally:
