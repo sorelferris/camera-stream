@@ -105,12 +105,9 @@ server.
 | `E` | Export endpoints, the status snapshot, and metrics as `camera-stream-client-YYYYMMDD-HHMMSS.json` in the current directory. Image payloads are not exported. |
 | `Q` / `Esc` | Exit. |
 
-The video wall adapts its grid to the window size and camera count. Grid tiles
-preserve the source aspect ratio and use letterboxing rather than stretching
-the image. When a tile is focused, the OpenCV window is resized to the largest
-source-aspect rectangle within the current video-wall bounds. The complete
-image then fills that focused window without stretching or cropping. Returning
-to the video wall restores the previous window size.
+The video wall adapts its grid to the window size and camera count. Each tile
+preserves the source aspect ratio and uses letterboxing rather than stretching
+the image.
 
 ## Status Bar And Tile States
 

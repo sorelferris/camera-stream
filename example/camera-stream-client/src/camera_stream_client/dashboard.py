@@ -39,19 +39,14 @@ class VideoWall:
         self._hits: list[TileHit] = []
         self._notice: tuple[str, int] | None = None
         self._last_size = (1440, 900)
-        self._wall_size = self._last_size
-        self._focus_size: tuple[int, int] | None = None
-        self._window_open = False
 
     def open(self) -> None:
         cv2.namedWindow(WINDOW_TITLE, cv2.WINDOW_NORMAL)
         cv2.resizeWindow(WINDOW_TITLE, *self._last_size)
         cv2.setMouseCallback(WINDOW_TITLE, self._on_mouse)
-        self._window_open = True
 
     def close(self) -> None:
         cv2.destroyWindow(WINDOW_TITLE)
-        self._window_open = False
 
     def render(
         self,
@@ -68,11 +63,9 @@ class VideoWall:
             if focused_view is None:
                 self.focused = None
             else:
-                self._resize_for_focus(focused_view["image"])
                 self._hits = self._draw_focus(canvas, focused_view)
                 self._draw_notice(canvas)
                 return canvas
-        self._wall_size = (width, height)
         self._draw_global_bar(canvas, views, status, receiver_error)
         self._hits = self._draw_grid(canvas, views)
         self._draw_notice(canvas)
@@ -89,7 +82,7 @@ class VideoWall:
         elif key in (ord("e"), ord("E")):
             return "export"
         elif key in (13, 10) and self.focused:
-            self._restore_wall_size()
+            self.focused = None
         return None
 
     def notice(self, message: str, seconds: float = 2.5) -> None:
@@ -412,33 +405,6 @@ class VideoWall:
             image, (target_width, target_height), interpolation=cv2.INTER_AREA
         )
         return resized, (width - target_width) // 2, (height - target_height) // 2
-
-    def _resize_for_focus(self, image: np.ndarray | None) -> None:
-        if image is None:
-            return
-        target = self._focus_window_size(image, self._wall_size)
-        if target == self._focus_size:
-            return
-        self._focus_size = target
-        if self._window_open:
-            cv2.resizeWindow(WINDOW_TITLE, *target)
-
-    def _restore_wall_size(self) -> None:
-        self.focused = None
-        self._focus_size = None
-        if self._window_open:
-            cv2.resizeWindow(WINDOW_TITLE, *self._wall_size)
-
-    @staticmethod
-    def _focus_window_size(
-        image: np.ndarray, bounds: tuple[int, int]
-    ) -> tuple[int, int]:
-        """Find the largest source-aspect window contained by the wall bounds."""
-        bound_width, bound_height = bounds
-        aspect = image.shape[1] / image.shape[0]
-        if bound_width / bound_height > aspect:
-            return max(320, round(bound_height * aspect)), bound_height
-        return bound_width, max(240, round(bound_width / aspect))
 
     @staticmethod
     def _overlay(
