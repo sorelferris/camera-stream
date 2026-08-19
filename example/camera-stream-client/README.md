@@ -140,7 +140,7 @@ the client.
 The bottom of every tile shows the compact summary by default:
 
 ```text
-RX 30.0 fps  AVG 29.8 fps  1% 24.1 fps  4.2 Mbps
+RX 30.0 fps  AVG 29.8 fps  1%LOW 24.1 fps  4.2 Mbps
 age 38.0 ms*  gap loss 0.7%  local loss 2.3%
 ```
 
@@ -148,7 +148,7 @@ age 38.0 ms*  gap loss 0.7%  local loss 2.3%
 |---|---|---|
 | `RX` | Instantaneous FPS calculated from the interval between the two most recently received frames. | Shows current arrival speed. A single-frame fluctuation is normal. |
 | `AVG` | Average FPS over at most 300 received-frame intervals. | Shows short-term stable throughput. |
-| `1%` | FPS calculated from the average interval of the slowest 1% of at most 300 received-frame intervals. | The closer it is to `AVG`, the fewer low-FPS spikes and less jitter the stream has. |
+| `1% LOW` | FPS calculated from the average interval of the slowest 1% of at most 300 received-frame intervals. | The closer it is to `AVG`, the fewer low-FPS spikes and less jitter the stream has. |
 | `Mbps` | Bit rate of received compressed image payloads over the previous second. | Excludes ZeroMQ protocol headers; useful for checking link and JPEG load. |
 | `age` | Estimated frame age from header `captured_utc_ns` to the client's current UTC time. | The `*` means this depends on NTP/PTP clock synchronization. Without clock synchronization, clock offset appears as latency. |
 | `gap loss` | Sequence gaps divided by estimated source frames over at most 300 received frames. | Frames were absent before reaching the client receive path. Causes may include capture, IPC, PUB high-water-mark behavior, or the network; it is not necessarily network packet loss. |
