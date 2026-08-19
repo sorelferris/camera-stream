@@ -64,6 +64,27 @@ uv run --package camera-stream-client camera-stream-client \
 uv run camera-stream --config config.yaml --tui
 ```
 
+## systemd 部署
+
+先按所选配置同步相机驱动依赖，再安装并启动系统服务：
+
+```bash
+uv sync --extra realsense --extra orbbec
+sudo scripts/install_camera_stream_service.sh --config "$PWD/config.yaml"
+```
+
+安装脚本会解析 `uv`、项目目录和 YAML 配置的绝对路径，安装
+`camera-stream.service`，并在不启用 TUI 的情况下启动它。默认以执行 `sudo` 的
+用户运行；该用户必须能够读取项目和配置文件，并具有访问相机的权限。
+
+```bash
+systemctl status camera-stream.service
+journalctl -u camera-stream.service -f
+```
+
+可通过 `--user robot` 指定其他运行账户，使用 `--unit-name NAME` 指定其他单元名称，
+使用 `--no-start` 只安装而不启动。移动检出目录或修改配置路径后，应重新运行安装脚本。
+
 ## 客户端快速开始
 
 `config.yaml` 中的端点是服务端的绑定地址。远端客户端必须将 `0.0.0.0` 替换为

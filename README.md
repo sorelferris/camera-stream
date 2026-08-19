@@ -69,6 +69,30 @@ remains headless and suitable for systemd.
 uv run camera-stream --config config.yaml --tui
 ```
 
+## systemd Deployment
+
+Synchronize the environment with the camera drivers required by the selected
+configuration, then install and start the system service:
+
+```bash
+uv sync --extra realsense --extra orbbec
+sudo scripts/install_camera_stream_service.sh --config "$PWD/config.yaml"
+```
+
+The installer resolves absolute paths for `uv`, the project, and the YAML
+configuration; installs `camera-stream.service`; and starts it without the
+TUI. By default it runs as the user who invoked `sudo`, which must have read
+access to the project/configuration and permission to access the cameras.
+
+```bash
+systemctl status camera-stream.service
+journalctl -u camera-stream.service -f
+```
+
+Use `--user robot` to select a different runtime account, `--unit-name NAME`
+for another unit name, and `--no-start` to install without starting it. Rerun
+the installer after moving the checkout or changing the configuration path.
+
 ## Client Quick Start
 
 The endpoints in `config.yaml` are server bind addresses. A remote client must

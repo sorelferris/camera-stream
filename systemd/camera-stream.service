@@ -1,0 +1,21 @@
+[Unit]
+Description=camera-stream ZeroMQ multi-camera streaming service
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=exec
+# Replaced by scripts/install_camera_stream_service.sh with an absolute wrapper path.
+ExecStart=/usr/local/lib/camera-stream/camera-stream-run
+Environment=PYTHONUNBUFFERED=1
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=20
+KillSignal=SIGINT
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
