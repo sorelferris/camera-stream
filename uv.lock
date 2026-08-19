@@ -2,12 +2,6 @@ version = 1
 revision = 3
 requires-python = "==3.10.*"
 
-[manifest]
-members = [
-    "camera-stream-client",
-    "camera-stream-server",
-]
-
 [[package]]
 name = "annotated-types"
 version = "0.8.0"
@@ -40,25 +34,8 @@ wheels = [
 ]
 
 [[package]]
-name = "camera-stream-client"
-version = "0.1.8"
-source = { editable = "example/camera-stream-client" }
-dependencies = [
-    { name = "numpy" },
-    { name = "opencv-python" },
-    { name = "pyzmq" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "numpy", specifier = ">=2.2.6" },
-    { name = "opencv-python", specifier = ">=5.0.0.93" },
-    { name = "pyzmq", specifier = ">=27.1.0" },
-]
-
-[[package]]
-name = "camera-stream-server"
-version = "0.1.3"
+name = "camera-stream"
+version = "0.2.0"
 source = { editable = "." }
 dependencies = [
     { name = "numpy" },

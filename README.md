@@ -36,17 +36,17 @@ isolated cached environment and runs its command without a manual install.
 Start an OpenCV/V4L2 deployment without cloning this repository:
 
 ```bash
-uvx camera-stream-server --download-template
+uvx camera-stream --download-template
 # Edit ./config.yaml for local devices and endpoints.
-uvx camera-stream-server --config ./config.yaml
+uvx camera-stream --config ./config.yaml
 ```
 
 RealSense and Orbbec drivers are package extras. Select those required by the
 configuration:
 
 ```bash
-uvx --from 'camera-stream-server[realsense,orbbec]' \
-  camera-stream-server --config /absolute/path/to/config.yaml
+uvx --from 'camera-stream[realsense,orbbec]' \
+  camera-stream --config /absolute/path/to/config.yaml
 ```
 
 `--download-template` writes a starter OpenCV/V4L2 `config.yaml` into the
@@ -59,23 +59,23 @@ The graphical client discovers configured cameras and displays all color
 streams with live diagnostics:
 
 ```bash
-uvx camera-stream-client --endpoint tcp://192.168.5.24:5555
+uvx --from camera-stream camera-stream-client --endpoint tcp://192.168.5.24:5555
 ```
 
 Use the server's reachable IP address, not its bind address `0.0.0.0`.
 
 ### 3. Inspect topics with `uvx`
 
-The server package also provides ROS-like read-only diagnostics. These commands
+The package also provides ROS-like read-only diagnostics. These commands
 need no repository checkout and connect only to the public stream endpoint:
 
 ```bash
-uvx camera-stream-server topic list --endpoint tcp://192.168.5.24:5555
-uvx camera-stream-server topic list --endpoint tcp://192.168.5.24:5555 --verbose
-uvx camera-stream-server topic info base_camera/color --endpoint tcp://192.168.5.24:5555
-uvx camera-stream-server topic echo base_camera/color --endpoint tcp://192.168.5.24:5555 --count 1
-uvx camera-stream-server topic hz base_camera/color --endpoint tcp://192.168.5.24:5555
-uvx camera-stream-server topic bw base_camera/color --endpoint tcp://192.168.5.24:5555
+uvx camera-stream topic list --endpoint tcp://192.168.5.24:5555
+uvx camera-stream topic list --endpoint tcp://192.168.5.24:5555 --verbose
+uvx camera-stream topic info base_camera/color --endpoint tcp://192.168.5.24:5555
+uvx camera-stream topic echo base_camera/color --endpoint tcp://192.168.5.24:5555 --count 1
+uvx camera-stream topic hz base_camera/color --endpoint tcp://192.168.5.24:5555
+uvx camera-stream topic bw base_camera/color --endpoint tcp://192.168.5.24:5555
 ```
 
 `list` reads the status directory and lists all configured `<camera>/color`
@@ -94,10 +94,10 @@ configuration, use `tcp://192.168.5.24:5555` for frames and status.
 ### Use the client package
 
 For applications that need decoded frames without managing ZeroMQ sockets,
-use the `camera-stream-client` package's latest-frame-wins interface:
+use the `camera-stream` package's latest-frame-wins interface:
 
 ```python
-from camera_stream_client import StreamClient
+from camera_stream import StreamClient
 
 with StreamClient("tcp://192.168.5.24:5555") as client:
     camera = client.subscribe("base_camera/color")
@@ -110,9 +110,7 @@ with StreamClient("tcp://192.168.5.24:5555") as client:
 
 `read()` returns the newest available frame and discards older unread frames.
 `latest()` returns immediately, while `state`, `error`, `status`, `metrics`,
-and `wait_for_state()` expose server and local receive diagnostics. See the
-[client package README](example/camera-stream-client/README.md#use-from-python)
-for the complete interface.
+and `wait_for_state()` expose server and local receive diagnostics.
 
 ### Discover camera topics and status
 
@@ -197,10 +195,9 @@ finally:
 
 To receive every camera topic, subscribe with `b""` instead. That also receives
 two-part `status/camera/<camera-name>` events and `status/snapshot`, so check
-the multipart length before treating a message as a three-part image frame. See
-[`example/camera-stream-client/`](example/camera-stream-client/) for the
-installable visual debugging client. It can be run locally with the `uvx`
-command above, then from PyPI as `uvx camera-stream-client ...` after release.
+the multipart length before treating a message as a three-part image frame. The
+same `camera-stream` package provides the visual client through the
+`camera-stream-client` command.
 
 ### Idle camera policy
 
@@ -239,13 +236,11 @@ uv run camera-stream --config config.yaml
 Run the local client source with the workspace command:
 
 ```bash
-uv run --package camera-stream-client camera-stream-client \
+uv run camera-stream-client \
   --endpoint=tcp://127.0.0.1:5555
 ```
 
-For an isolated package run from this checkout, use
-`uvx --no-cache --from ./example/camera-stream-client camera-stream-client ...`.
-The `--no-cache` flag ensures that `uvx` rebuilds changed local source.
+`uv run camera-stream-client` uses the current checkout source.
 
 Use the bundled V4L2 demo and the in-process server TUI when developing:
 
@@ -279,13 +274,13 @@ journalctl -u camera-stream.service -f
 Use `--user robot`, `--unit-name NAME`, or `--no-start` as needed. Rerun the
 installer after moving the checkout or configuration.
 
-## Publish the Server Package
+## Publish the Package
 
 ```bash
-scripts/publish_camera_stream_server.sh
+scripts/publish_camera_stream.sh
 
 export UV_PUBLISH_TOKEN='pypi-...'
-scripts/publish_camera_stream_server.sh --publish
+scripts/publish_camera_stream.sh --publish
 ```
 
 Use `--testpypi --publish` with a TestPyPI token before production. The script

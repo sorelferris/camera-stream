@@ -129,13 +129,13 @@ def test_topic_echo_hz_and_bw_stop_after_requested_frames(capsys) -> None:
     assert "average bandwidth:" in output
 
 
-def test_server_distribution_exposes_pypi_and_compatible_cli_names() -> None:
+def test_unified_distribution_exposes_server_and_client_cli_names() -> None:
     project_file = Path(__file__).parents[1] / "pyproject.toml"
     document = project_file.read_text(encoding="utf-8")
 
-    assert 'name = "camera-stream-server"' in document
+    assert 'name = "camera-stream"' in document
     assert 'camera-stream = "camera_stream.streamer:main"' in document
-    assert 'camera-stream-server = "camera_stream.streamer:main"' in document
+    assert 'camera-stream-client = "camera_stream.client.cli:main"' in document
 
 
 def test_download_template_writes_once_without_overwriting(

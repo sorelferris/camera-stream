@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Build and optionally publish the camera-stream-server distribution.
+# Build and optionally publish the unified camera-stream distribution.
 set -euo pipefail
 
 readonly SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 readonly REPOSITORY_ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
-readonly DIST_DIR="$REPOSITORY_ROOT/dist/camera-stream-server"
+readonly DIST_DIR="$REPOSITORY_ROOT/dist/camera-stream"
 
 publish=false
 test_pypi=false
@@ -12,9 +12,9 @@ allow_dirty=false
 
 usage() {
   cat <<'EOF'
-Usage: scripts/publish_camera_stream_server.sh [OPTIONS]
+Usage: scripts/publish_camera_stream.sh [OPTIONS]
 
-Build, validate, and publish camera-stream-server.
+Build, validate, and publish camera-stream.
 
 Options:
   --publish       Upload after validation. Without this flag, perform a dry run.
@@ -27,9 +27,9 @@ Environment:
                     to this script for a CI Trusted Publishing workflow.
 
 Examples:
-  scripts/publish_camera_stream_server.sh
-  scripts/publish_camera_stream_server.sh --testpypi --publish
-  UV_PUBLISH_TOKEN=pypi-... scripts/publish_camera_stream_server.sh --publish
+  scripts/publish_camera_stream.sh
+  scripts/publish_camera_stream.sh --testpypi --publish
+  UV_PUBLISH_TOKEN=pypi-... scripts/publish_camera_stream.sh --publish
 EOF
 }
 
@@ -74,21 +74,14 @@ else
   readonly TARGET_NAME='PyPI'
 fi
 
-printf 'Validating camera-stream-server for %s...\n' "$TARGET_NAME"
-uv run --extra dev pytest -q \
-  tests/test_capture_loop.py \
-  tests/test_config.py \
-  tests/test_dashboard.py \
-  tests/test_demand.py \
-  tests/test_protocol.py \
-  tests/test_streamer.py \
-  tests/test_supervisor.py
+printf 'Validating camera-stream for %s...\n' "$TARGET_NAME"
+uv run --extra dev pytest -q
 uv run --extra dev black --check src tests
 uv run --extra dev ruff check src tests
 git diff --check
 
 printf 'Building distributions in %s...\n' "$DIST_DIR"
-uv build --package camera-stream-server --out-dir "$DIST_DIR" --clear
+uv build --package camera-stream --out-dir "$DIST_DIR" --clear
 uvx twine check "$DIST_DIR"/*
 
 publish_args=(
@@ -101,7 +94,7 @@ if ! $publish; then
 fi
 
 if $publish; then
-  printf 'Uploading camera-stream-server to %s...\n' "$TARGET_NAME"
+  printf 'Uploading camera-stream to %s...\n' "$TARGET_NAME"
 else
   printf 'Dry-running upload to %s; no files will be uploaded.\n' "$TARGET_NAME"
 fi
@@ -109,7 +102,7 @@ uv publish "${publish_args[@]}" "$DIST_DIR"/*
 
 if $publish; then
   printf 'Published successfully. Verify with:\n'
-  printf '  uvx --refresh camera-stream-server --help\n'
+  printf '  uvx --refresh camera-stream --help\n'
 else
   printf '%s\n' 'Validation and dry run completed. Re-run with --publish to upload.'
 fi

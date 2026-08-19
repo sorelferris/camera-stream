@@ -1,4 +1,4 @@
-from camera_stream_client import StreamClient
+from camera_stream import StreamClient
 
 with StreamClient("tcp://192.168.5.24:5555") as client:
     camera = client.subscribe("base_camera/color")

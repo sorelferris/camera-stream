@@ -1,28 +1,23 @@
-import sys
 import threading
 import time
-from pathlib import Path
 
 import cv2
 import numpy as np
 import pytest
 import zmq
 
-CLIENT_SOURCE = Path(__file__).parents[1] / "example" / "camera-stream-client" / "src"
-sys.path.insert(0, str(CLIENT_SOURCE))
-
-from camera_stream_client.cli import parse_args
-from camera_stream_client.client import CameraStream
-from camera_stream_client.dashboard import VideoWall
-from camera_stream_client.protocol import (
+from camera_stream.client.cli import parse_args
+from camera_stream.client.client import CameraStream
+from camera_stream.client.dashboard import VideoWall
+from camera_stream.client.protocol import (
     FrameMessage,
     ProtocolError,
     StatusEvent,
     StatusSnapshot,
     parse_message,
 )
-from camera_stream_client.state import CameraRegistry
-from camera_stream_client.transport import StatusStore, StreamReceiver, client_endpoint
+from camera_stream.client.state import CameraRegistry
+from camera_stream.client.transport import StatusStore, StreamReceiver, client_endpoint
 
 
 class _ClientStub:

@@ -17,7 +17,7 @@ SNAPSHOT_TOPIC = b"status/snapshot"
 
 
 def add_topic_subcommands(subparsers: argparse._SubParsersAction[Any]) -> None:
-    """Add ``camera-stream-server topic`` commands to the root CLI parser."""
+    """Add ``camera-stream topic`` commands to the root CLI parser."""
     topic = subparsers.add_parser("topic", help="inspect a running stream endpoint")
     commands = topic.add_subparsers(dest="topic_command", required=True)
 

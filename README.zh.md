@@ -34,16 +34,16 @@ PyPI 包并执行命令，无需手动安装。
 无需克隆仓库，即可启动仅使用 OpenCV/V4L2 的部署：
 
 ```bash
-uvx camera-stream-server --download-template
+uvx camera-stream --download-template
 # 修改当前目录下的 ./config.yaml，填入本机设备与端点。
-uvx camera-stream-server --config ./config.yaml
+uvx camera-stream --config ./config.yaml
 ```
 
 RealSense 与 Orbbec 驱动是可选包 extra。根据配置中的相机选择所需 extra：
 
 ```bash
-uvx --from 'camera-stream-server[realsense,orbbec]' \
-  camera-stream-server --config /absolute/path/to/config.yaml
+uvx --from 'camera-stream[realsense,orbbec]' \
+  camera-stream --config /absolute/path/to/config.yaml
 ```
 
 `--download-template` 会在当前目录写入 OpenCV/V4L2 起步配置 `config.yaml`，若目标文件
@@ -54,22 +54,22 @@ uvx --from 'camera-stream-server[realsense,orbbec]' \
 图形客户端会自动发现已配置的相机，并显示全部彩色流及实时诊断信息：
 
 ```bash
-uvx camera-stream-client --endpoint tcp://192.168.5.24:5555
+uvx --from camera-stream camera-stream-client --endpoint tcp://192.168.5.24:5555
 ```
 
 使用服务端实际可达的 IP，而不是绑定地址 `0.0.0.0`。
 
 ### 3. 使用 `uvx` 诊断 topic
 
-服务端包提供类似 ROS 的只读诊断命令。无需检出仓库，只连接公共推流端点：
+统一包提供类似 ROS 的只读诊断命令。无需检出仓库，只连接公共推流端点：
 
 ```bash
-uvx camera-stream-server topic list --endpoint tcp://192.168.5.24:5555
-uvx camera-stream-server topic list --endpoint tcp://192.168.5.24:5555 --verbose
-uvx camera-stream-server topic info base_camera/color --endpoint tcp://192.168.5.24:5555
-uvx camera-stream-server topic echo base_camera/color --endpoint tcp://192.168.5.24:5555 --count 1
-uvx camera-stream-server topic hz base_camera/color --endpoint tcp://192.168.5.24:5555
-uvx camera-stream-server topic bw base_camera/color --endpoint tcp://192.168.5.24:5555
+uvx camera-stream topic list --endpoint tcp://192.168.5.24:5555
+uvx camera-stream topic list --endpoint tcp://192.168.5.24:5555 --verbose
+uvx camera-stream topic info base_camera/color --endpoint tcp://192.168.5.24:5555
+uvx camera-stream topic echo base_camera/color --endpoint tcp://192.168.5.24:5555 --count 1
+uvx camera-stream topic hz base_camera/color --endpoint tcp://192.168.5.24:5555
+uvx camera-stream topic bw base_camera/color --endpoint tcp://192.168.5.24:5555
 ```
 
 `list` 读取状态目录并列出全部已配置的 `<camera>/color` 主题，不会唤醒相机。`info` 输出
@@ -85,10 +85,10 @@ IP。使用随附配置时，图像和状态均使用 `tcp://192.168.5.24:5555`�
 ### 使用客户端包
 
 应用若需要已解码图像，又不希望自行管理 ZeroMQ socket，可使用
-`camera-stream-client` 提供的最新帧优先接口：
+`camera-stream` 提供的最新帧优先接口：
 
 ```python
-from camera_stream_client import StreamClient
+from camera_stream import StreamClient
 
 with StreamClient("tcp://192.168.5.24:5555") as client:
     camera = client.subscribe("base_camera/color")
@@ -100,8 +100,7 @@ with StreamClient("tcp://192.168.5.24:5555") as client:
 ```
 
 `read()` 返回最新可用帧，并丢弃未读取的旧帧。`latest()` 立即返回；`state`、`error`、
-`status`、`metrics` 和 `wait_for_state()` 则提供服务端状态和本地接收诊断。完整接口见
-[客户端包 README](example/camera-stream-client/README.md#use-from-python)。
+`status`、`metrics` 和 `wait_for_state()` 则提供服务端状态和本地接收诊断。
 
 ### 发现相机 topic 与状态
 
@@ -182,8 +181,7 @@ finally:
 
 若需订阅所有相机主题，请订阅 `b""`。这也会收到两段式的
 `status/camera/<camera-name>` 事件和 `status/snapshot`，因此在将消息视作三段式图像帧前，
-需要检查消息段数。
-可安装的图形调试客户端见 [`example/camera-stream-client/`](example/camera-stream-client/)。
+需要检查消息段数。统一 `camera-stream` 包提供 `camera-stream-client` 图形调试命令。
 
 ### 空闲相机策略
 
@@ -219,13 +217,11 @@ uv run camera-stream --config config.yaml
 从工作区运行本地客户端：
 
 ```bash
-uv run --package camera-stream-client camera-stream-client \
+uv run camera-stream-client \
   --endpoint=tcp://127.0.0.1:5555
 ```
 
-若要在隔离环境中从当前检出目录运行客户端，请使用
-`uvx --no-cache --from ./example/camera-stream-client camera-stream-client ...`；
-`--no-cache` 会确保 `uvx` 重新构建已变更的本地源码。
+`uv run camera-stream-client` 使用当前检出目录的源码。
 
 本机若有三台可用的 V4L2 设备，可使用示例配置开发和查看服务端 TUI：
 
@@ -257,13 +253,13 @@ journalctl -u camera-stream.service -f
 可通过 `--user robot` 指定其他运行账户，使用 `--unit-name NAME` 指定其他单元名称，
 使用 `--no-start` 只安装而不启动。移动检出目录或修改配置路径后，应重新运行安装脚本。
 
-## 发布服务端包
+## 发布统一包
 
 ```bash
-scripts/publish_camera_stream_server.sh
+scripts/publish_camera_stream.sh
 
 export UV_PUBLISH_TOKEN='pypi-...'
-scripts/publish_camera_stream_server.sh --publish
+scripts/publish_camera_stream.sh --publish
 ```
 
 正式发布前可用 TestPyPI token 执行 `--testpypi --publish`。除非显式传入
