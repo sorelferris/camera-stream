@@ -33,6 +33,9 @@ latest-frame-wins policy.
 After the server package is published, start an OpenCV/V4L2-only deployment
 without installing this repository:
 
+`uvx` is the Python/uv equivalent of `npx`: it resolves the PyPI package into
+an isolated cached environment and runs its command without a manual install.
+
 ```bash
 uvx camera-stream-server --download-template
 # Edit ./config.yaml for local devices and endpoints.

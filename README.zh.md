@@ -30,6 +30,9 @@ OpenCV/V4L2、Intel RealSense 和 Orbbec 彩色相机。
 
 服务端包发布后，无需安装本仓库即可启动仅使用 OpenCV/V4L2 的部署：
 
+`uvx` 是 Python/uv 中对应 `npx` 的一次性运行方式：它在隔离且可缓存的环境中解析
+PyPI 包并执行命令，无需手动安装。
+
 ```bash
 uvx camera-stream-server --download-template
 # 修改当前目录下的 ./config.yaml，填入本机设备与端点。
