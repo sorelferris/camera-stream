@@ -1,9 +1,9 @@
 # camera-stream-client
 
 `camera-stream-client` is a graphical ZeroMQ debugging client for
-[`camera-stream`](../../README.md). It subscribes to the server PUB image
-stream, renders a multi-camera OpenCV video wall, and overlays receive quality,
-latency, decoding, and server-state metrics on every tile.
+[`camera-stream`](../../README.md). It subscribes to the server PUB/SUB stream
+for images and status, renders a multi-camera OpenCV video wall, and overlays
+receive quality, latency, decoding, and server-state metrics on every tile.
 
 The client follows a latest-frame-wins policy. The receiver and renderer are
 separated by a capacity-one latest-frame slot. If rendering cannot keep up, a
@@ -20,8 +20,7 @@ uses the current source tree, so code changes are reflected on every run:
 
 ```bash
 uv run --package camera-stream-client camera-stream-client \
-  --endpoint tcp://192.168.5.24:5555 \
-  --status-endpoint tcp://192.168.5.24:5556
+  --endpoint tcp://192.168.5.24:5555
 ```
 
 To verify the isolated `uvx` distribution from a checkout, force a fresh local
@@ -30,14 +29,13 @@ run a previously built `camera-stream-client==0.1.0`:
 
 ```bash
 uvx --no-cache --from ./example/camera-stream-client camera-stream-client \
-  --endpoint tcp://192.168.5.24:5555 \
-  --status-endpoint tcp://192.168.5.24:5556
+  --endpoint tcp://192.168.5.24:5555
 ```
 
 Set `--endpoint` to the externally reachable address of `stream_pub` in the
-server `config.yaml`, and set `--status-endpoint` to the externally reachable
-address of `status_rep`. `0.0.0.0` is a server bind address; remote clients
-must use the server's actual IP address, such as `192.168.5.24`.
+server `config.yaml`. It carries both images and status messages. `0.0.0.0` is
+a server bind address; remote clients must use the server's actual IP address,
+such as `192.168.5.24`.
 
 Repeat `--camera` to subscribe to selected cameras only. Filtering happens at
 the ZeroMQ SUB subscription layer, so image data for other cameras is not
@@ -46,7 +44,6 @@ downloaded:
 ```bash
 uv run --package camera-stream-client camera-stream-client \
   --endpoint tcp://192.168.5.24:5555 \
-  --status-endpoint tcp://192.168.5.24:5556 \
   --camera base_camera \
   --camera side_camera
 ```
@@ -85,15 +82,13 @@ use `--allow-dirty` only for deliberate local builds.
 
 | Argument | Required | Description |
 |---|---:|---|
-| `--endpoint ENDPOINT` | Yes | ZeroMQ PUB endpoint for image streams, for example `tcp://192.168.5.24:5555`. |
-| `--status-endpoint ENDPOINT` | No | ZeroMQ REP endpoint for authoritative camera status, for example `tcp://192.168.5.24:5556`. It is queried once per second with a 500 ms timeout and never blocks video reception. |
+| `--endpoint ENDPOINT` | Yes | ZeroMQ PUB/SUB endpoint for image and status streams, for example `tcp://192.168.5.24:5555`. |
 | `--camera NAME` | No, repeatable | Subscribe only to the `<NAME>/color` topic. When omitted, subscribe to every camera and discover cameras dynamically. |
 | `--version` | No | Print the client version. |
 
-The status endpoint is never inferred from the image endpoint port; pass it
-explicitly. Without it, the client can still display video and local metrics,
-but it cannot report driver state, capture cost, or IPC metrics from the
-server.
+The client always subscribes to `status/` on this endpoint. It receives
+immediate per-camera state events plus a complete server snapshot every second,
+without a second socket or a polling request/reply round trip.
 
 ## Controls
 
@@ -111,7 +106,9 @@ the image.
 
 ## Status Bar And Tile States
 
-The global status bar shows the stream endpoint, status-snapshot freshness,
+The global status bar shows the stream endpoint and status-snapshot freshness
+(`waiting` before the first snapshot, `fresh` up to three seconds, then
+`stale`),
 the number of `LIVE` cameras over the number of visible tiles, the aggregate
 one-second receive rate of visible cameras, and the keyboard shortcuts.
 
@@ -123,12 +120,11 @@ server state:
 | `LIVE` | The client is still receiving frames for this camera. |
 | `WAITING` | The client has not received the first frame. A camera requested with `--camera`, or discovered through a status snapshot, appears in this state first. |
 | `STALE` | The camera was seen before, but no new frame has arrived for `max(2 seconds, 3 x receive interval P50)`. The last image and historical metrics remain visible for troubleshooting. |
-| `srv:ONLINE` / `OFFLINE` / `RECOVERING` / `CONFIG_ERROR` | Authoritative state reported by the server status endpoint. |
+| `srv:ONLINE` / `OFFLINE` / `RECOVERING` / `CONFIG_ERROR` | State reported by the server's `status/camera/<name>` events and periodic `status/snapshot`. |
 | `srv:IDLE_PENDING` | No client currently subscribes to this camera. The server is waiting for the configured idle timeout before stopping its worker. |
-| `srv:SLEEPING` | No camera stream subscriber remained through the idle timeout. The server has stopped the worker, closed the camera SDK, and stopped capture and encoding. Status polling alone does not wake it. |
+| `srv:SLEEPING` | No camera stream subscriber remained through the idle timeout. The server has stopped the worker, closed the camera SDK, and stopped capture and encoding. A `status/` subscription alone does not wake it. |
 | `srv:WAKING` | A SUB subscription for this camera arrived and the server is starting a new worker. The state becomes `ONLINE` after the first frame. |
-| `srv:WAITING` | A status endpoint was configured, but the first status snapshot has not arrived. |
-| `srv:DISABLED` | No `--status-endpoint` was provided, so no server state source is available. |
+| `srv:WAITING` | The first `status/snapshot` has not arrived on the stream endpoint. |
 
 The client state and `srv:` state intentionally remain separate. For example,
 `LIVE + srv:OFFLINE` can show the final frame received before a disconnect,
@@ -175,10 +171,10 @@ available space.
 | `draw p95` | P95 cost of compositing the HUD onto the image. |
 | `rx->display p95` | P95 local time from the receiver thread accepting a frame until JPEG decoding completes and the frame is handed to rendering. It excludes server capture time and is different from `age`. |
 | `jpeg` / `raw_bgr8`, `WIDTHxHEIGHT` | Codec and source dimensions read from the most recent frame header. |
-| `server capture` | Camera capture FPS reported by the server worker. Requires `--status-endpoint`. |
-| `pub` | Per-camera server publish FPS. Requires `--status-endpoint`. |
-| `capture cost` | Most recent duration of the server camera driver's `read()` call. Requires `--status-endpoint`. |
-| `IPC` | Most recent worker-side encoding and internal IPC PUSH send duration. Requires `--status-endpoint`. |
+| `server capture` | Camera capture FPS reported by the server worker in the periodic status snapshot. |
+| `pub` | Per-camera server publish FPS reported in the periodic status snapshot. |
+| `capture cost` | Most recent duration of the server camera driver's `read()` call, reported in the periodic status snapshot. |
+| `IPC` | Most recent worker-side encoding and internal IPC PUSH send duration, reported in the periodic status snapshot. |
 | `protocol OK` / `invalid frames N` | Image protocol validation result. Frames with invalid headers, unknown codecs, or decode failures are dropped and counted. A server-reported camera error takes precedence on this line. |
 
 `rx->display` covers client receive, time waiting in the latest-frame slot, and
@@ -192,5 +188,5 @@ window presentation time in `cv2.imshow` is not included.
 | High `gap loss`, low `local loss` | Check server `server capture` and `pub`, capture-slot and IPC drops in the server TUI, then network throughput. |
 | Low `gap loss`, high `local loss` | Check client `decode p95`, `draw p95`, video-wall camera count, and local CPU use. Test one stream with `--camera`. |
 | Both loss rates are high | Total resolution, FPS, or JPEG bit rate exceeds available system capacity. Reduce unneeded camera resolution, FPS, or JPEG quality first. |
-| `srv:WAITING` persists | Confirm `--status-endpoint` points to the server `status_rep` endpoint and check for `status unavailable` in the global status bar. |
+| `srv:WAITING` persists | Confirm that the stream endpoint is reachable and that a `status/snapshot` arrives. Check whether the global status bar remains `status waiting for snapshot` or becomes stale. |
 | `STALE` with `srv:ONLINE` | The server considers the driver online but the client is not receiving new images. Inspect the PUB path and `gap loss`. |

@@ -21,7 +21,6 @@ def valid_service(camera: dict | None = None) -> dict:
     return {
         "endpoints": {
             "stream_pub": "tcp://127.0.0.1:5555",
-            "status_rep": "tcp://127.0.0.1:5556",
         },
         "cameras": [camera or valid_camera()],
     }
@@ -63,5 +62,12 @@ def test_idle_policy_is_optional_and_validated() -> None:
     assert ServiceConfig.model_validate(document).idle_policy.sleep_after_s == 15
 
     document["idle_policy"]["sleep_after_s"] = 0
+    with pytest.raises(ValidationError):
+        ServiceConfig.model_validate(document)
+
+
+def test_status_rep_endpoint_is_no_longer_part_of_the_configuration() -> None:
+    document = valid_service()
+    document["endpoints"]["status_rep"] = "tcp://127.0.0.1:5556"
     with pytest.raises(ValidationError):
         ServiceConfig.model_validate(document)

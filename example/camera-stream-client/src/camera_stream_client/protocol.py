@@ -39,7 +39,12 @@ class StatusEvent:
     error: str | None
 
 
-def parse_message(parts: list[bytes]) -> FrameMessage | StatusEvent:
+@dataclass(frozen=True)
+class StatusSnapshot:
+    snapshot: dict[str, Any]
+
+
+def parse_message(parts: list[bytes]) -> FrameMessage | StatusEvent | StatusSnapshot:
     """Parse one PUB message without decoding its image payload."""
     if not parts:
         raise ProtocolError("message has no topic")
@@ -48,8 +53,11 @@ def parse_message(parts: list[bytes]) -> FrameMessage | StatusEvent:
     except UnicodeDecodeError as exc:
         raise ProtocolError("topic is not UTF-8") from exc
 
-    if len(parts) == 2 and topic.startswith("status/"):
-        return _parse_status_event(topic, parts[1])
+    if len(parts) == 2:
+        if topic == "status/snapshot":
+            return _parse_status_snapshot(parts[1])
+        if topic.startswith("status/camera/"):
+            return _parse_status_event(topic, parts[1])
     if len(parts) != 3:
         raise ProtocolError(f"expected 3 image parts, got {len(parts)}")
 
@@ -85,20 +93,32 @@ def decode_frame(frame: FrameMessage) -> np.ndarray:
 
 
 def _parse_status_event(topic: str, payload: bytes) -> StatusEvent:
-    camera = topic.removeprefix("status/")
+    camera = topic.removeprefix("status/camera/")
     if not camera:
         raise ProtocolError("status event has no camera")
     try:
         event = json.loads(payload.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise ProtocolError("status event is not valid JSON", camera=camera) from exc
-    if not isinstance(event, dict) or event.get("type") != "status":
+    if not isinstance(event, dict) or event.get("type") != "camera_state":
         raise ProtocolError("unsupported status event", camera=camera)
     state = event.get("state")
     if not isinstance(state, str):
         raise ProtocolError("status event has no state", camera=camera)
     error = event.get("error")
     return StatusEvent(camera=camera, state=state, error=str(error) if error else None)
+
+
+def _parse_status_snapshot(payload: bytes) -> StatusSnapshot:
+    try:
+        snapshot = json.loads(payload.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ProtocolError("status snapshot is not valid JSON") from exc
+    if not isinstance(snapshot, dict) or snapshot.get("type") != "snapshot":
+        raise ProtocolError("unsupported status snapshot")
+    if not isinstance(snapshot.get("cameras"), list):
+        raise ProtocolError("status snapshot has no cameras")
+    return StatusSnapshot(snapshot=snapshot)
 
 
 def _validate_frame(topic: str, header: dict[str, Any], payload: bytes) -> None:

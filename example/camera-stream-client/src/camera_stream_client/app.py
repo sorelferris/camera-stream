@@ -13,7 +13,7 @@ import cv2
 
 from .dashboard import VideoWall
 from .state import CameraRegistry
-from .transport import StatusPoller, StatusStore, StreamReceiver, client_endpoint
+from .transport import StatusStore, StreamReceiver, client_endpoint
 
 
 class ClientApp:
@@ -23,34 +23,25 @@ class ClientApp:
         self,
         *,
         endpoint: str,
-        status_endpoint: str | None,
         cameras: list[str],
     ) -> None:
         self.stream_endpoint = client_endpoint(endpoint)
-        self.status_endpoint = (
-            client_endpoint(status_endpoint) if status_endpoint is not None else None
-        )
         self.cameras = set(cameras)
         self.stop = threading.Event()
         self.registry = CameraRegistry(self.cameras)
         self.status_store = StatusStore()
         self.receiver = StreamReceiver(
-            self.stream_endpoint, self.cameras, self.registry, self.stop
+            self.stream_endpoint,
+            self.cameras,
+            self.registry,
+            self.status_store,
+            self.stop,
         )
-        self.status_poller = (
-            StatusPoller(
-                self.status_endpoint, self.registry, self.status_store, self.stop
-            )
-            if self.status_endpoint
-            else None
-        )
-        self.wall = VideoWall(self.stream_endpoint, self.status_endpoint)
+        self.wall = VideoWall(self.stream_endpoint)
 
     def run(self) -> int:
         self.wall.open()
         self.receiver.start()
-        if self.status_poller is not None:
-            self.status_poller.start()
         try:
             while not self.stop.is_set():
                 self.registry.consume_latest()
@@ -74,8 +65,6 @@ class ClientApp:
         finally:
             self.stop.set()
             self.receiver.join(timeout=1.0)
-            if self.status_poller is not None:
-                self.status_poller.join(timeout=1.0)
             self.wall.close()
         return 0
 
@@ -93,7 +82,6 @@ class ClientApp:
             "schema_version": 1,
             "created_utc": datetime.now(timezone.utc).isoformat(),
             "stream_endpoint": self.stream_endpoint,
-            "status_endpoint": self.status_endpoint,
             "requested_cameras": sorted(self.cameras),
             "status": status,
             "cameras": [self._export_view(view) for view in views],

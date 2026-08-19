@@ -1,3 +1,4 @@
+import json
 import socket
 import time
 
@@ -37,7 +38,6 @@ def service_config() -> ServiceConfig:
         {
             "endpoints": {
                 "stream_pub": "tcp://127.0.0.1:*",
-                "status_rep": "tcp://localhost:*",
             },
             "cameras": [
                 {
@@ -131,6 +131,30 @@ def test_status_snapshot_includes_connected_pub_clients() -> None:
         assert snapshot["service"]["stream_bitrate_mbps"] == 1
         assert snapshot["service"]["estimated_egress_mbps"] == 1
     finally:
+        supervisor.shutdown()
+
+
+def test_status_snapshot_is_published_to_standard_subscribers() -> None:
+    supervisor = Supervisor(service_config())
+    context = zmq.Context()
+    subscriber = context.socket(zmq.SUB)
+    subscriber.setsockopt(zmq.LINGER, 0)
+    subscriber.setsockopt(zmq.SUBSCRIBE, b"status/")
+    subscriber.connect(supervisor.stream_pub.getsockopt_string(zmq.LAST_ENDPOINT))
+    try:
+        assert supervisor.stream_pub.poll(1000) == zmq.POLLIN
+        supervisor._handle_stream_subscriptions()
+        supervisor._publish_status_snapshot()
+        assert subscriber.poll(1000) == zmq.POLLIN
+        topic, payload = subscriber.recv_multipart()
+        snapshot = json.loads(payload.decode("utf-8"))
+        assert topic == b"status/snapshot"
+        assert snapshot["type"] == "snapshot"
+        assert snapshot["cameras"][0]["name"] == "cam"
+        assert supervisor.records["cam"].demand_subscriptions == 0
+    finally:
+        subscriber.close(0)
+        context.term()
         supervisor.shutdown()
 
 

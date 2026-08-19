@@ -18,10 +18,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="server stream PUB endpoint, e.g. tcp://192.168.5.24:5555",
     )
     parser.add_argument(
-        "--status-endpoint",
-        help="optional server status REP endpoint, e.g. tcp://192.168.5.24:5556",
-    )
-    parser.add_argument(
         "--camera",
         action="append",
         default=[],
@@ -36,6 +32,5 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     return ClientApp(
         endpoint=args.endpoint,
-        status_endpoint=args.status_endpoint,
         cameras=args.camera,
     ).run()

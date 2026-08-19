@@ -26,6 +26,7 @@ RECOVERY_WATCHDOG_TIMEOUT_NS = 10_000_000_000
 BITRATE_WINDOW_NS = 1_000_000_000
 BITRATE_BUCKET_NS = 100_000_000
 BITRATE_BUCKET_COUNT = BITRATE_WINDOW_NS // BITRATE_BUCKET_NS
+STATUS_SNAPSHOT_INTERVAL_NS = 1_000_000_000
 
 
 @dataclass
@@ -51,6 +52,7 @@ class Supervisor:
         self.status_revision = 0
         self.started_monotonic_ns = time.monotonic_ns()
         self.last_published_frame_ns = 0
+        self.last_status_snapshot_ns = 0
         self.last_service_cost_ms: float | None = None
         self.last_supervisor_cost_ms: float | None = None
         self.publish_bitrate_buckets: deque[tuple[int, int]] = deque(
@@ -70,13 +72,10 @@ class Supervisor:
         self.stream_monitor = self.stream_pub.get_monitor_socket(
             zmq.EVENT_ACCEPTED | zmq.EVENT_DISCONNECTED
         )
-        self.status_rep = self._socket(zmq.REP, rcvhwm=10, sndhwm=10)
-        self.status_rep.bind(config.endpoints.status_rep)
         self.poller = zmq.Poller()
         for socket in (
             self.frame_pull,
             self.control_router,
-            self.status_rep,
             self.stream_pub,
         ):
             self.poller.register(socket, zmq.POLLIN)
@@ -176,17 +175,24 @@ class Supervisor:
             self.status_revision += 1
             event = {
                 "schema_version": 1,
-                "type": "status",
+                "type": "camera_state",
                 "status_revision": self.status_revision,
                 "camera": record.config.name,
                 "state": state,
                 "at_monotonic_ns": time.monotonic_ns(),
                 "error": error,
             }
-            self.stream_pub.send_multipart(
-                [f"status/{record.config.name}".encode(), json_bytes(event)],
-                flags=zmq.DONTWAIT,
-            )
+            try:
+                self.stream_pub.send_multipart(
+                    [
+                        f"status/camera/{record.config.name}".encode(),
+                        json_bytes(event),
+                    ],
+                    flags=zmq.DONTWAIT,
+                )
+            except zmq.Again:
+                # The next periodic snapshot lets slow subscribers converge.
+                pass
 
     def _handle_stream_subscriptions(self) -> None:
         """Apply standard SUB topic changes emitted by the XPUB socket."""
@@ -426,7 +432,6 @@ class Supervisor:
                     stream_bitrate_mbps * len(self.clients), 2
                 ),
                 "stream_pub": self.config.endpoints.stream_pub,
-                "status_rep": self.config.endpoints.status_rep,
                 "idle_policy": {
                     "enabled": self.config.idle_policy.enabled,
                     "sleep_after_s": self.config.idle_policy.sleep_after_s,
@@ -437,7 +442,7 @@ class Supervisor:
         }
 
     def status_snapshot(self) -> dict[str, Any]:
-        """Return the current in-process status for the REP API and dashboard."""
+        """Return the current in-process status for PUB snapshots and the dashboard."""
         return self._status_snapshot()
 
     def _stream_bitrate_mbps(self, now_ns: int) -> float:
@@ -463,20 +468,20 @@ class Supervisor:
             return
         self.publish_bitrate_buckets.append((bucket_start_ns, size))
 
-    def _handle_status(self) -> None:
+    def _publish_status_snapshot(self) -> None:
+        """Broadcast the full state periodically so late SUB clients converge."""
+        now_ns = time.monotonic_ns()
+        if now_ns - self.last_status_snapshot_ns < STATUS_SNAPSHOT_INTERVAL_NS:
+            return
+        snapshot = self._status_snapshot()
+        snapshot["type"] = "snapshot"
         try:
-            request = json.loads(self.status_rep.recv().decode("utf-8"))
-            if request.get("op") != "get_status":
-                raise ValueError("only get_status is supported")
-            response = self._status_snapshot()
-        except (
-            ValueError,
-            AttributeError,
-            UnicodeDecodeError,
-            json.JSONDecodeError,
-        ) as exc:
-            response = {"schema_version": 1, "error": str(exc)}
-        self.status_rep.send(json_bytes(response))
+            self.stream_pub.send_multipart(
+                [b"status/snapshot", json_bytes(snapshot)], flags=zmq.DONTWAIT
+            )
+        except zmq.Again:
+            return
+        self.last_status_snapshot_ns = now_ns
 
     def _handle_stream_monitor(self) -> None:
         while True:
@@ -583,14 +588,13 @@ class Supervisor:
                     self._publish_frame()
                 if self.control_router in events:
                     self._handle_control()
-                if self.status_rep in events:
-                    self._handle_status()
                 if self.stream_monitor in events:
                     self._handle_stream_monitor()
                 if self.stream_pub in events:
                     self._handle_stream_subscriptions()
                 self._monitor_workers()
                 self._reconcile_idle_policy()
+                self._publish_status_snapshot()
                 if dashboard is not None:
                     dashboard.update()
         finally:
@@ -605,7 +609,6 @@ class Supervisor:
         for record in self.records.values():
             self._stop_worker(record)
         for socket in (
-            self.status_rep,
             self.stream_pub,
             self.control_router,
             self.frame_pull,

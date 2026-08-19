@@ -31,9 +31,8 @@ class TileHit:
 class VideoWall:
     """Single resizable OpenCV window with grid and focus modes."""
 
-    def __init__(self, stream_endpoint: str, status_endpoint: str | None) -> None:
+    def __init__(self, stream_endpoint: str) -> None:
         self.stream_endpoint = stream_endpoint
-        self.status_endpoint = status_endpoint
         self.diagnostics = False
         self.focused: str | None = None
         self._hits: list[TileHit] = []
@@ -598,7 +597,7 @@ class VideoWall:
         state = view["server"].get("state") or view["stream_state"]
         if state:
             return f"srv:{state}"
-        return "srv:WAITING" if self.status_endpoint else "srv:DISABLED"
+        return "srv:WAITING"
 
     @staticmethod
     def _fps(value: float | None) -> str:
@@ -621,10 +620,7 @@ class VideoWall:
         return f"invalid frames {invalid}" if invalid else "protocol OK"
 
     def _status_text(self, status: dict[str, Any]) -> str:
-        if self.status_endpoint is None:
-            return "status disabled"
         age = status.get("last_success_age_s")
         if age is not None:
-            return f"status fresh {age:.0f}s"
-        error = status.get("last_error") or "connecting"
-        return f"status unavailable: {error}"[:80]
+            return f"status {'stale' if age > 3 else 'fresh'} {age:.0f}s"
+        return "status waiting for snapshot"

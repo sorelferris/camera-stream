@@ -13,7 +13,6 @@ def test_dashboard_renders_in_process_status() -> None:
         {
             "endpoints": {
                 "stream_pub": "tcp://127.0.0.1:*",
-                "status_rep": "tcp://localhost:*",
             },
             "cameras": [
                 {
@@ -63,7 +62,7 @@ def test_dashboard_renders_in_process_status() -> None:
         assert "cost 2 ms" in output.getvalue()
         assert "cost 0.60 ms" in output.getvalue()
         assert "PUB  tcp://127.0.0.1:*" in output.getvalue()
-        assert "REP  tcp://localhost:*" in output.getvalue()
+        assert "status  PUB snapshot 1s" in output.getvalue()
         assert "uptime 00:00:00" in output.getvalue()
         assert "up 00:00:00" in output.getvalue()
         assert "egress  0 Mbps" in output.getvalue()

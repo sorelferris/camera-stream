@@ -15,7 +15,7 @@
 > | Real-time policy | Capacity-one, latest-frame-wins stages discard stale frames instead of accumulating latency |
 > | Image format | Per-camera JPEG for lower bandwidth, or lossless `raw_bgr8` output |
 > | On-demand operation | Topic-demand idle sleep/wake stops unused camera capture and encoding |
-> | Operations | REP status API, stream status events, and an optional Rich monitoring dashboard |
+> | Operations | Status events and periodic snapshots on the stream endpoint, plus an optional Rich monitoring dashboard |
 >
 > **Best suited to:** real-time robotic perception, multi-camera intranet
 > distribution, and shared image sources for multiple algorithm nodes. It is a
@@ -71,8 +71,7 @@ every discovered color stream in an OpenCV mosaic with live HUD metrics:
 
 ```bash
 uv run --package camera-stream-client camera-stream-client \
-  --endpoint=tcp://127.0.0.1:5555 \
-  --status-endpoint=tcp://127.0.0.1:5556
+  --endpoint=tcp://127.0.0.1:5555
 ```
 
 For an isolated package run from this checkout, use
@@ -86,13 +85,12 @@ shows them in a single adaptive video wall:
 ```bash
 uv run camera-stream --config config.demo.yaml --tui
 uv run --package camera-stream-client camera-stream-client \
-  --endpoint=tcp://127.0.0.1:5555 \
-  --status-endpoint=tcp://127.0.0.1:5556
+  --endpoint=tcp://127.0.0.1:5555
 ```
 
 Pass `--tui` to render a Rich dashboard in the same server process. The
-dashboard reads supervisor state directly, so it does not create a second
-status client or compete for either endpoint. Without `--tui`, the service
+dashboard reads supervisor state directly, so it does not create a ZeroMQ
+client or compete for stream capacity. Without `--tui`, the service
 remains headless and suitable for systemd.
 
 ```bash
@@ -145,8 +143,7 @@ The script rejects a dirty worktree unless `--allow-dirty` is explicitly set.
 
 The endpoints in `config.yaml` are server bind addresses. A remote client must
 replace `0.0.0.0` with the server's reachable IP address. With the bundled
-configuration, use `tcp://192.168.5.24:5555` for frames and
-`tcp://192.168.5.24:5556` for status.
+configuration, use `tcp://192.168.5.24:5555` for frames and status.
 
 ### Idle camera policy
 
@@ -160,8 +157,8 @@ idle_policy:
 
 The server exposes the same standard ZeroMQ PUB/SUB image protocol, but uses
 an XPUB socket internally to observe SUB topic subscriptions. This is **topic
-demand**, not TCP connection demand: a client that only queries `status_rep`
-does not wake a camera.
+demand**, not TCP connection demand: a client that subscribes only to
+`status/` does not wake a camera.
 
 After the last matching subscription to `<camera>/color` disappears, the
 camera remains active for `sleep_after_s`. It then stops its worker, closes the
@@ -177,37 +174,44 @@ frame after wake includes device open, exposure settling, and first-capture
 time. Set `enabled: false` for continuous capture and the lowest first-frame
 latency.
 
-### Request camera status
+### Subscribe to camera status
 
-The status endpoint uses a strict REQ/REP exchange. Send one request, receive
-one snapshot, then send the next request on the same socket.
+Status and frames use the same `stream_pub` endpoint. Subscribe to `status/`
+to receive immediate per-camera state events and a full snapshot every second.
+Both are best-effort PUB/SUB messages: a late or slow subscriber may miss a
+message, but the next snapshot lets it converge again. A `status/` subscription
+does not count as camera demand and therefore does not wake capture.
 
 ```python
+import json
+
 import zmq
 
 context = zmq.Context()
-status = context.socket(zmq.REQ)
-status.setsockopt(zmq.LINGER, 0)
-status.connect("tcp://192.168.5.24:5556")
+stream = context.socket(zmq.SUB)
+stream.setsockopt(zmq.RCVHWM, 1)
+stream.setsockopt(zmq.LINGER, 0)
+stream.setsockopt(zmq.SUBSCRIBE, b"status/")
+stream.connect("tcp://192.168.5.24:5555")
 
-status.send_json({"op": "get_status"})
-snapshot = status.recv_json()
-
-for camera in snapshot["cameras"]:
-    print(
-        camera["name"],
-        camera["state"],
-        f"capture={camera['capture_fps']} fps",
-        f"drops={camera['dropped_before_encode'] + camera['dropped_ipc']}",
-    )
-
-status.close()
-context.term()
+try:
+    while True:
+        topic, payload = stream.recv_multipart()
+        message = json.loads(payload.decode("utf-8"))
+        if topic == b"status/snapshot" and message.get("type") == "snapshot":
+            for camera in message["cameras"]:
+                print(camera["name"], camera["state"])
+        elif topic.startswith(b"status/camera/"):
+            print(topic.decode(), message["state"], message.get("error"))
+finally:
+    stream.close()
+    context.term()
 ```
 
-The snapshot includes service uptime, configured endpoints, current bitrate and
-client metadata as well as the per-camera fields shown above. It is a point-in-
-time query; request it again when a later state is needed.
+The snapshot includes service uptime, configured endpoint, current bitrate and
+client metadata as well as all per-camera metrics. State events use
+`status/camera/<camera-name>` and have `type: "camera_state"`; snapshots use
+`status/snapshot` and have `type: "snapshot"`.
 
 ### Subscribe to a camera stream
 
@@ -225,11 +229,17 @@ stream = context.socket(zmq.SUB)
 stream.setsockopt(zmq.RCVHWM, 1)
 stream.setsockopt(zmq.LINGER, 0)
 stream.setsockopt(zmq.SUBSCRIBE, b"base_camera/color")
+stream.setsockopt(zmq.SUBSCRIBE, b"status/")
 stream.connect("tcp://192.168.5.24:5555")
 
 try:
     while True:
-        topic, header_bytes, payload = stream.recv_multipart()
+        parts = stream.recv_multipart()
+        if len(parts) == 2:
+            topic, status_bytes = parts
+            print(topic.decode("utf-8"), json.loads(status_bytes.decode("utf-8")))
+            continue
+        topic, header_bytes, payload = parts
         header = json.loads(header_bytes.decode("utf-8"))
         print(
             topic.decode("utf-8"),
@@ -245,8 +255,8 @@ finally:
 ```
 
 To receive every camera topic, subscribe with `b""` instead. That also receives
-two-part `status/<camera-name>` state events, so check the multipart length
-before treating a message as a three-part image frame. See
+two-part `status/camera/<camera-name>` events and `status/snapshot`, so check
+the multipart length before treating a message as a three-part image frame. See
 [`example/camera-stream-client/`](example/camera-stream-client/) for the
 installable visual debugging client. It can be run locally with the `uvx`
 command above, then from PyPI as `uvx camera-stream-client ...` after release.
@@ -260,7 +270,7 @@ snapshot and does not create another ZeroMQ client.
 
 ```mermaid
 flowchart LR
-    Config["config.yaml\nexplicit stream_pub + status_rep"]
+    Config["config.yaml\nexplicit stream_pub"]
 
     subgraph Workers["spawn camera workers"]
         W1["Camera worker\nOpenCV / RealSense / Orbbec"]
@@ -272,7 +282,7 @@ flowchart LR
     subgraph Server["camera-stream server process"]
         Supervisor["SUPERVISOR\nIPC PULL HWM 1\ncontrol ROUTER"]
         Demand["Topic demand\nXPUB subscription events"]
-        Service["SERVICE\nXPUB SNDHWM 1\nPUB/SUB compatible\nstatus REP"]
+        Service["SERVICE\nXPUB SNDHWM 1\nPUB/SUB compatible\nstatus events + 1 s snapshots"]
         TUI["Rich TUI\n--tui\nin-process snapshot"]
         Supervisor -. "logical handoff\nper-frame cost" .-> Service
         Demand --> Supervisor
@@ -282,7 +292,6 @@ flowchart LR
 
     ClientA["Client A\nSUB"]
     ClientB["Client B\nSUB"]
-    StatusClient["Status client\nREQ/REP"]
 
     Config --> Workers
     Config --> Server
@@ -290,9 +299,8 @@ flowchart LR
     W1 -. "DEALER control\nhello/state/heartbeat" .-> Supervisor
     ClientA -. "SUB topic demand" .-> Demand
     ClientB -. "SUB topic demand" .-> Demand
-    Service -->|"TCP PUB/SUB\n<camera>/color\nJPEG / BGR"| ClientA
+    Service -->|"TCP PUB/SUB\n<camera>/color + status/\nJPEG / BGR"| ClientA
     Service --> ClientB
-    Service -->|"TCP REP\nget_status"| StatusClient
 
     classDef worker fill:#e8f4ea,stroke:#2f7d45,color:#173b21
     classDef supervisor fill:#f2eafa,stroke:#7b4aa5,color:#321b4d
@@ -301,7 +309,7 @@ flowchart LR
     class W1,Driver,Encode worker
     class Supervisor,Demand supervisor
     class Service,TUI service
-    class ClientA,ClientB,StatusClient client
+    class ClientA,ClientB client
 ```
 
 ### Data-flow guarantees
@@ -311,10 +319,12 @@ flowchart LR
 - Camera workers use the `spawn` multiprocessing start method. A worker owns
   its camera SDK and reports `hello`, state transitions and heartbeat metrics
   through the internal ROUTER/DEALER control channel.
-- `stream_pub` is externally a standard one-to-many ZeroMQ PUB/SUB endpoint.
+- `stream_pub` is the single external one-to-many ZeroMQ PUB/SUB endpoint.
   Internally it is XPUB solely to observe subscription events for idle policy;
-  clients use ordinary SUB sockets and do not compete for frames. `status_rep`
-  is a separate endpoint defined in `config.yaml`.
+  clients use ordinary SUB sockets and do not compete for frames. It publishes
+  `status/camera/<camera-name>` state events immediately and a full
+  `status/snapshot` every second. Those status messages are best-effort, like
+  frames; a status-only subscription never creates camera demand.
 - The dashboard's `cost` values are processing costs: camera read, Supervisor
   PULL-to-PUB preparation and local PUB enqueue. Client receive/decode latency
   and actual client-side drops are not observable from PUB/SUB alone.
@@ -340,9 +350,9 @@ flowchart LR
 
         Supervisor["SUPERVISOR<br/>frame PULL, HWM 1<br/>control ROUTER<br/>workers N<br/>subtitle: cost N ms"]
 
-        Zmq["ZeroMQ<br/>>>>>>>><br/>XPUB / REP"]
+        Zmq["ZeroMQ<br/>>>>>>>><br/>XPUB / SUB"]
 
-        Service["SERVICE<br/>XPUB tcp://host:5555<br/>REP tcp://host:5556<br/>rate N Mbps<br/>egress N Mbps<br/>clients N<br/>subtitle: cost N ms"]
+        Service["SERVICE<br/>XPUB tcp://host:5555<br/>status PUB snapshot 1s<br/>rate N Mbps<br/>egress N Mbps<br/>clients N<br/>subtitle: cost N ms"]
 
         Pub["PUB<br/>>>>>>>><br/>SUB"]
 
@@ -376,8 +386,8 @@ flowchart LR
 - **SUPERVISOR**: IPC PULL and control ROUTER roles plus worker count. Its
   `active/total` worker count reveals cameras currently kept awake. Its
   subtitle is time from complete IPC receipt to beginning PUB forwarding.
-- **SERVICE**: the configured XPUB (PUB/SUB-compatible) and REP endpoints,
-  current publish rate,
+- **SERVICE**: the configured XPUB (PUB/SUB-compatible) endpoint, periodic
+  status snapshot cadence, current publish rate,
   estimated egress (`rate × connected clients`) and client count. Its subtitle
   is the local PUB enqueue cost.
 - **Client**: remote IP and TCP port, available codecs, estimated receive rate
@@ -434,15 +444,17 @@ For a `jpeg` frame, decode the third part with
 `raw_bgr8`, first verify `payload_size == width * height * 3`, then reshape it
 to `(height, width, 3)` with `np.uint8`.
 
-`status_rep` accepts `{"op":"get_status"}` and returns the supervisor's
-current status snapshot. Each camera includes `demand_subscriptions` (matching
-SUB subscription count, not connected-client count) and `idle_after_s`; the
-service includes `active_worker_count` and its effective `idle_policy`. State
-changes are also published on the stream socket under
-`status/<camera-name>`. When idle policy is disabled, a camera remains
+The stream endpoint publishes a complete status snapshot every second on
+`status/snapshot`, and sends each camera state change immediately on
+`status/camera/<camera-name>`. Each snapshot includes `demand_subscriptions`
+(matching `<camera>/color` subscriptions, not connected-client count) and
+`idle_after_s`; the service includes `active_worker_count` and its effective
+`idle_policy`. A later snapshot repairs a missed state event, but PUB/SUB does
+not guarantee delivery. When idle policy is disabled, a camera remains
 `STARTING` until its worker captures a first frame, then changes to `ONLINE`
-without any stream subscriber. When it is enabled, only a matching stream
-subscription keeps that camera awake or wakes it from `SLEEPING`.
+without any stream subscriber. When it is enabled, only a matching image-topic
+subscription keeps that camera awake or wakes it from `SLEEPING`; `status/`
+alone does not.
 
 The service is intentionally live-only: no recording, replay, frame grouping,
 or image transformation is performed. Every internal data stage has capacity

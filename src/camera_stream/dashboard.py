@@ -42,7 +42,7 @@ class Dashboard:
             Align(self._camera_nodes(statuses), vertical="middle"),
             self._arrow("IPC", " PUSH / PULL "),
             Align(self._supervisor_node(service), vertical="middle"),
-            self._arrow("ZeroMQ ", "PUB / REP"),
+            self._arrow("ZeroMQ", "XPUB / SUB"),
             Align(self._service_node(service), vertical="middle"),
         ]
         if clients:
@@ -140,7 +140,7 @@ class Dashboard:
             style="green",
         )
         details.append(
-            f"REP  {service.get('status_rep', '-')}\n",
+            "status  PUB snapshot 1s\n",
             style="cyan",
         )
         details.append(

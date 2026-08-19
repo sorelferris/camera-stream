@@ -7,7 +7,6 @@
 
 endpoints:
   stream_pub: "tcp://0.0.0.0:5555"
-  status_rep: "tcp://0.0.0.0:5556"
 
 # Stop capture and JPEG encoding after this camera has no stream subscribers
 # for 60 seconds. Set enabled: false for continuous capture.

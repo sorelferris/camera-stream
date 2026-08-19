@@ -13,18 +13,11 @@ class StrictModel(BaseModel):
 
 class EndpointConfig(StrictModel):
     stream_pub: str
-    status_rep: str
 
     @model_validator(mode="after")
     def validate_endpoints(self) -> EndpointConfig:
-        for name, endpoint in (
-            ("stream_pub", self.stream_pub),
-            ("status_rep", self.status_rep),
-        ):
-            if not endpoint.startswith("tcp://"):
-                raise ValueError(f"{name} must use a tcp:// endpoint")
-        if self.stream_pub == self.status_rep:
-            raise ValueError("stream_pub and status_rep must be different")
+        if not self.stream_pub.startswith("tcp://"):
+            raise ValueError("stream_pub must use a tcp:// endpoint")
         return self
 
 

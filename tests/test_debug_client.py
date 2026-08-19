@@ -11,7 +11,13 @@ sys.path.insert(0, str(CLIENT_SOURCE))
 
 from camera_stream_client.cli import parse_args
 from camera_stream_client.dashboard import VideoWall
-from camera_stream_client.protocol import FrameMessage, ProtocolError, parse_message
+from camera_stream_client.protocol import (
+    FrameMessage,
+    ProtocolError,
+    StatusEvent,
+    StatusSnapshot,
+    parse_message,
+)
 from camera_stream_client.state import CameraRegistry
 from camera_stream_client.transport import client_endpoint
 
@@ -48,6 +54,26 @@ def test_parse_frame_rejects_topic_header_mismatch() -> None:
         parse_message([b"other/color", _header(), b"\x01\x02\x03"])
 
 
+def test_parse_single_endpoint_status_messages() -> None:
+    event = parse_message(
+        [
+            b"status/camera/front",
+            b'{"type":"camera_state","camera":"front","state":"ONLINE","error":null}',
+        ]
+    )
+    snapshot = parse_message(
+        [
+            b"status/snapshot",
+            b'{"type":"snapshot","schema_version":1,"cameras":[{"name":"front"}]}',
+        ]
+    )
+
+    assert isinstance(event, StatusEvent)
+    assert event.camera == "front"
+    assert isinstance(snapshot, StatusSnapshot)
+    assert snapshot.snapshot["cameras"][0]["name"] == "front"
+
+
 def test_registry_tracks_local_overwrite_and_sequence_gap() -> None:
     registry = CameraRegistry(set())
     first = parse_message([b"front/color", _header(sequence=1), b"\x01\x02\x03"])
@@ -69,7 +95,6 @@ def test_cli_and_wildcard_endpoint() -> None:
     args = parse_args(
         [
             "--endpoint=tcp://0.0.0.0:5555",
-            "--status-endpoint=tcp://127.0.0.1:5556",
             "--camera=front",
             "--camera=side",
         ]
@@ -85,7 +110,7 @@ def test_chart_range_labels_keep_compact_fps_readable() -> None:
 
 
 def test_metric_row_keeps_value_anchors_stable(monkeypatch) -> None:
-    wall = VideoWall("tcp://stream", None)
+    wall = VideoWall("tcp://stream")
     calls: list[tuple[str, tuple[int, int]]] = []
     monkeypatch.setattr(
         wall,
@@ -112,7 +137,7 @@ def test_metric_row_keeps_value_anchors_stable(monkeypatch) -> None:
 
 
 def test_chart_statistics_are_drawn_above_the_chart_box(monkeypatch) -> None:
-    wall = VideoWall("tcp://stream", None)
+    wall = VideoWall("tcp://stream")
     label_baselines: list[int] = []
     chart_tops: list[int] = []
     monkeypatch.setattr(
@@ -144,7 +169,7 @@ def test_focused_tile_uses_the_full_window() -> None:
     registry.receive(frame, time.monotonic_ns(), time.time_ns())
     registry.consume_latest()
     view = registry.views(time.monotonic_ns(), time.time_ns())[0]
-    wall = VideoWall("tcp://stream", None)
+    wall = VideoWall("tcp://stream")
     wall.focused = "front"
 
     canvas = wall.render([view], {"last_success_age_s": None}, None)
@@ -156,15 +181,9 @@ def test_focused_tile_uses_the_full_window() -> None:
 def test_server_state_label_explains_missing_status_source() -> None:
     unknown = {"server": {}, "stream_state": None}
 
+    assert VideoWall("tcp://stream")._server_state_label(unknown) == "srv:WAITING"
     assert (
-        VideoWall("tcp://stream", None)._server_state_label(unknown) == "srv:DISABLED"
-    )
-    assert (
-        VideoWall("tcp://stream", "tcp://status")._server_state_label(unknown)
-        == "srv:WAITING"
-    )
-    assert (
-        VideoWall("tcp://stream", "tcp://status")._server_state_label(
+        VideoWall("tcp://stream")._server_state_label(
             {"server": {"state": "ONLINE"}, "stream_state": None}
         )
         == "srv:ONLINE"
