@@ -30,7 +30,7 @@ index-url = "https://pypi.org/simple"
 
 [tool.uv.workspace]
 members = [
-    "example/client",
+    "example/camera-stream-client",
 ]
 
 [build-system]

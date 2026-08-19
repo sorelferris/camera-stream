@@ -13,23 +13,25 @@ uv sync --extra realsense --extra orbbec
 uv run camera-stream --config config.yaml
 ```
 
-The Python client demo needs only the server PUB endpoint. It discovers camera
-names and image dimensions from frame headers, then displays every discovered
-color stream in an OpenCV mosaic:
+The standalone visual debugging client needs only the server PUB endpoint. It
+discovers camera names and image dimensions from frame headers, then displays
+every discovered color stream in an OpenCV mosaic with live HUD metrics:
 
 ```bash
-uv run python example/client.py --endpoint=tcp://127.0.0.1:5555
-# Headless statistics-only mode
-uv run python example/client.py --endpoint=tcp://127.0.0.1:5555 --no-display
+uvx --from ./example/camera-stream-client camera-stream-client \
+  --endpoint=tcp://127.0.0.1:5555 \
+  --status-endpoint=tcp://127.0.0.1:5556
 ```
 
 For the three V4L2 devices available on this machine, use the ready-to-run
-demo configuration. The client discovers all camera topics and shows them in a
-single 2-column mosaic window:
+demo configuration. The debugging client discovers all camera topics and
+shows them in a single adaptive video wall:
 
 ```bash
 uv run camera-stream --config config.demo.yaml --tui
-uv run python example/client.py --endpoint=tcp://127.0.0.1:5555
+uvx --from ./example/camera-stream-client camera-stream-client \
+  --endpoint=tcp://127.0.0.1:5555 \
+  --status-endpoint=tcp://127.0.0.1:5556
 ```
 
 Pass `--tui` to render a Rich dashboard in the same server process. The
@@ -118,7 +120,9 @@ finally:
 To receive every camera topic, subscribe with `b""` instead. That also receives
 two-part `status/<camera-name>` state events, so check the multipart length
 before treating a message as a three-part image frame. See
-[`example/client.py`](example/client.py) for an all-camera OpenCV mosaic client.
+[`example/camera-stream-client/`](example/camera-stream-client/) for the
+installable visual debugging client. It can be run locally with the `uvx`
+command above, then from PyPI as `uvx camera-stream-client ...` after release.
 
 ## Architecture
 

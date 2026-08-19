@@ -5,7 +5,7 @@ requires-python = "==3.10.*"
 [manifest]
 members = [
     "camera-stream",
-    "client",
+    "camera-stream-client",
 ]
 
 [[package]]
@@ -82,6 +82,23 @@ requires-dist = [
 provides-extras = ["realsense", "orbbec", "dev"]
 
 [[package]]
+name = "camera-stream-client"
+version = "0.1.0"
+source = { editable = "example/camera-stream-client" }
+dependencies = [
+    { name = "numpy" },
+    { name = "opencv-python" },
+    { name = "pyzmq" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "numpy", specifier = ">=2.2.6" },
+    { name = "opencv-python", specifier = ">=5.0.0.93" },
+    { name = "pyzmq", specifier = ">=27.1.0" },
+]
+
+[[package]]
 name = "cffi"
 version = "2.1.1"
 source = { registry = "https://pypi.org/simple" }
@@ -115,11 +132,6 @@ sdist = { url = "https://files.pythonhosted.org/packages/76/d4/81420972a676e8ffe
 wheels = [
     { url = "https://files.pythonhosted.org/packages/fb/e2/79c688af8b210d232694e31e59da9f6ec747bae31c3f5946e4e9b98860d5/click-8.4.2-py3-none-any.whl", hash = "sha256:e6f9f66136c816745b9d65817da91d61d957fb16e02e4dcd0552553c5a197b76", size = 119243, upload-time = "2026-06-24T17:45:13.73Z" },
 ]
-
-[[package]]
-name = "client"
-version = "0.1.0"
-source = { editable = "example/client" }
 
 [[package]]
 name = "colorama"
