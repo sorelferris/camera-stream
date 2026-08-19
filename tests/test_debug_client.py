@@ -86,25 +86,29 @@ def test_chart_range_labels_keep_compact_fps_readable() -> None:
 
 def test_metric_row_keeps_value_anchors_stable(monkeypatch) -> None:
     wall = VideoWall("tcp://stream", None)
-    anchors: list[int] = []
+    calls: list[tuple[str, tuple[int, int]]] = []
     monkeypatch.setattr(
         wall,
-        "_right_text",
-        lambda _canvas, _value, right, _y, _scale, _color: anchors.append(right),
+        "_text",
+        lambda _canvas, value, point, _scale, _color, **_kwargs: calls.append(
+            (value, point)
+        ),
     )
-    canvas = np.zeros((60, 320, 3), dtype=np.uint8)
+    canvas = np.zeros((60, 420, 3), dtype=np.uint8)
     fields = [("RX", "9.9 fps"), ("AVG", "9.9 fps"), ("RATE", "1.0 Mbps")]
-    wall._draw_metric_row(canvas, fields, 8, 20, 304, 0.4)
+    wall._draw_metric_row(canvas, fields, 8, 20, 404, 0.4)
     wall._draw_metric_row(
         canvas,
         [("RX", "100.0 fps"), ("AVG", "240.0 fps"), ("RATE", "99.9 Mbps")],
         8,
         40,
-        304,
+        404,
         0.4,
     )
 
-    assert anchors[:3] == anchors[3:]
+    labels = {"RX", "AVG", "RATE"}
+    value_positions = [point[0] for value, point in calls if value not in labels]
+    assert value_positions[:3] == value_positions[3:]
 
 
 def test_chart_statistics_are_drawn_above_the_chart_box(monkeypatch) -> None:

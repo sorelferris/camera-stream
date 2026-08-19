@@ -496,7 +496,8 @@ class VideoWall:
                 )
             column_right = column_left + column_width
             label_width = self._text_width(label, scale)
-            available_value_width = column_width - label_width - gap
+            value_x = column_left + label_width + gap
+            available_value_width = column_right - value_x - gap
 
             if available_value_width >= self._text_width("...", scale):
                 display_value = self._ellipsize(value, available_value_width, scale)
@@ -504,9 +505,7 @@ class VideoWall:
                 display_value = ""
             self._text(canvas, label, (column_left, baseline_y), scale, MUTED)
             if display_value:
-                self._right_text(
-                    canvas, display_value, column_right, baseline_y, scale, color
-                )
+                self._text(canvas, display_value, (value_x, baseline_y), scale, color)
 
             column_left = column_right
             remaining_width -= column_width
