@@ -214,6 +214,102 @@ def test_subscription_wakes_sleeping_camera(monkeypatch) -> None:
         supervisor.shutdown()
 
 
+def test_subscription_restores_idle_pending_worker_without_restarting() -> None:
+    supervisor = Supervisor(idle_service_config())
+    record = supervisor.records["cam"]
+    record.process = StuckWorkerProcess()
+    record.status["state"] = "ONLINE"
+    try:
+        supervisor._reconcile_camera_idle(record, time.monotonic_ns())
+        assert record.status["state"] == "IDLE_PENDING"
+
+        record.demand_subscriptions = 1
+        supervisor._reconcile_camera_idle(record, time.monotonic_ns())
+        assert record.process is not None
+        assert record.status["state"] == "ONLINE"
+    finally:
+        supervisor.shutdown()
+
+
+def test_subscription_restores_starting_state_while_worker_is_still_alive() -> None:
+    supervisor = Supervisor(idle_service_config())
+    record = supervisor.records["cam"]
+    record.process = StuckWorkerProcess()
+    try:
+        supervisor._reconcile_camera_idle(record, time.monotonic_ns())
+        assert record.status["state"] == "IDLE_PENDING"
+
+        record.demand_subscriptions = 1
+        supervisor._reconcile_camera_idle(record, time.monotonic_ns())
+        assert record.process is not None
+        assert record.status["state"] == "STARTING"
+    finally:
+        supervisor.shutdown()
+
+
+def test_initial_worker_online_before_first_subscription_is_restored() -> None:
+    supervisor = Supervisor(idle_service_config())
+    record = supervisor.records["cam"]
+    record.process = StuckWorkerProcess()
+    context = zmq.Context()
+    worker = context.socket(zmq.DEALER)
+    worker.connect(supervisor.control_endpoint)
+    try:
+        supervisor._reconcile_camera_idle(record, time.monotonic_ns())
+        assert record.status["state"] == "IDLE_PENDING"
+
+        worker.send_json({"type": "state", "camera": "cam", "state": "ONLINE"})
+        assert supervisor.control_router.poll(1000) == zmq.POLLIN
+        supervisor._handle_control()
+        worker.send_json(
+            {
+                "type": "capture",
+                "camera": "cam",
+                "captured_monotonic_ns": time.monotonic_ns(),
+                "captured_utc_ns": time.time_ns(),
+            }
+        )
+        assert supervisor.control_router.poll(1000) == zmq.POLLIN
+        supervisor._handle_control()
+
+        record.demand_subscriptions = 1
+        supervisor._reconcile_camera_idle(record, time.monotonic_ns())
+        assert record.status["state"] == "ONLINE"
+    finally:
+        worker.close(0)
+        context.term()
+        supervisor.shutdown()
+
+
+def test_idle_pending_does_not_hide_worker_errors() -> None:
+    supervisor = Supervisor(idle_service_config())
+    record = supervisor.records["cam"]
+    record.process = StuckWorkerProcess()
+    context = zmq.Context()
+    worker = context.socket(zmq.DEALER)
+    worker.connect(supervisor.control_endpoint)
+    try:
+        supervisor._reconcile_camera_idle(record, time.monotonic_ns())
+        assert record.status["state"] == "IDLE_PENDING"
+
+        worker.send_json(
+            {
+                "type": "state",
+                "camera": "cam",
+                "state": "OFFLINE",
+                "error": "device disconnected",
+            }
+        )
+        assert supervisor.control_router.poll(1000) == zmq.POLLIN
+        supervisor._handle_control()
+        assert record.status["state"] == "OFFLINE"
+        assert record.status["last_error"] == "device disconnected"
+    finally:
+        worker.close(0)
+        context.term()
+        supervisor.shutdown()
+
+
 def test_waking_reaps_an_exited_worker_before_starting(monkeypatch) -> None:
     supervisor = Supervisor(idle_service_config())
     record = supervisor.records["cam"]

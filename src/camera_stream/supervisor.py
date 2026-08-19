@@ -39,6 +39,7 @@ class WorkerRecord:
     next_restart_at: float = 0.0
     demand_subscriptions: int = 0
     idle_since_monotonic_ns: int | None = None
+    idle_resume_state: str | None = None
     accept_after_monotonic_ns: int = 0
     status: dict[str, Any] = field(default_factory=dict)
 
@@ -194,6 +195,25 @@ class Supervisor:
                 # The next periodic snapshot lets slow subscribers converge.
                 pass
 
+    def _set_worker_state(
+        self,
+        record: WorkerRecord,
+        state: str,
+        *,
+        error: str | None = None,
+        attempt: int | None = None,
+    ) -> None:
+        """Keep an idle overlay while an otherwise healthy worker becomes online."""
+        if (
+            self.config.idle_policy.enabled
+            and not record.demand_subscriptions
+            and record.status.get("state") == "IDLE_PENDING"
+            and state == "ONLINE"
+        ):
+            record.idle_resume_state = state
+            return
+        self._set_state(record, state, error=error, attempt=attempt)
+
     def _handle_stream_subscriptions(self) -> None:
         """Apply standard SUB topic changes emitted by the XPUB socket."""
         changed_names: set[str] = set()
@@ -223,9 +243,11 @@ class Supervisor:
         if record.demand_subscriptions:
             record.idle_since_monotonic_ns = None
             if record.process is None or not record.process.is_alive():
+                record.idle_resume_state = None
                 self._wake_worker(record)
             elif record.status.get("state") == "IDLE_PENDING":
-                self._set_state(record, "WAKING")
+                self._set_state(record, record.idle_resume_state or "ONLINE")
+                record.idle_resume_state = None
             return
 
         state = record.status.get("state")
@@ -233,6 +255,7 @@ class Supervisor:
             return
         if record.idle_since_monotonic_ns is None:
             record.idle_since_monotonic_ns = now_ns
+            record.idle_resume_state = state
             self._set_state(record, "IDLE_PENDING")
             return
         sleep_after_ns = int(self.config.idle_policy.sleep_after_s * 1_000_000_000)
@@ -255,6 +278,7 @@ class Supervisor:
     def _sleep_worker(self, record: WorkerRecord) -> None:
         self._stop_worker(record)
         record.idle_since_monotonic_ns = None
+        record.idle_resume_state = None
         record.status.update(
             {
                 "pid": None,
@@ -308,26 +332,19 @@ class Supervisor:
             worker_state = message.get("state", "OFFLINE")
             if worker_state == "ONLINE":
                 record.restart_attempt = 0
-            if not (
-                self.config.idle_policy.enabled
-                and not record.demand_subscriptions
-                and worker_state == "ONLINE"
-            ):
-                self._set_state(
-                    record,
-                    worker_state,
-                    error=message.get("error"),
-                    attempt=message.get("reconnect_attempt"),
-                )
+            self._set_worker_state(
+                record,
+                worker_state,
+                error=message.get("error"),
+                attempt=message.get("reconnect_attempt"),
+            )
         elif message.get("type") == "capture":
             record.status["last_capture_monotonic_ns"] = message.get(
                 "captured_monotonic_ns", 0
             )
             record.status["last_capture_utc_ns"] = message.get("captured_utc_ns", 0)
-            if record.status.get("state") != "ONLINE" and not (
-                self.config.idle_policy.enabled and not record.demand_subscriptions
-            ):
-                self._set_state(record, "ONLINE")
+            if record.status.get("state") != "ONLINE":
+                self._set_worker_state(record, "ONLINE")
         elif message.get("type") == "heartbeat":
             metrics = message.get("metrics", {})
             record.status.update(
@@ -532,6 +549,7 @@ class Supervisor:
                 if self.config.idle_policy.enabled and not record.demand_subscriptions:
                     record.process = None
                     record.identity = None
+                    record.idle_resume_state = None
                     self._set_state(record, "SLEEPING")
                     continue
                 record.restart_attempt += 1

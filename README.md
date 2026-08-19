@@ -167,12 +167,15 @@ only that camera by spawning a fresh worker. A subscription to `b""` is a
 prefix match for every camera topic and therefore wakes all cameras. No client
 protocol change is required.
 
-With this policy enabled, a camera normally progresses through
-`IDLE_PENDING -> SLEEPING -> WAKING -> ONLINE`. The initial `STARTING` worker
-also becomes `IDLE_PENDING` when no stream topic is subscribed. The first
-frame after wake includes device open, exposure settling, and first-capture
-time. Set `enabled: false` for continuous capture and the lowest first-frame
-latency.
+With this policy enabled, a camera progresses through
+`IDLE_PENDING -> SLEEPING -> WAKING -> ONLINE` only when demand stays absent
+until the worker is stopped. If demand returns during `IDLE_PENDING`, the
+still-running worker resumes its previous state directly, usually `ONLINE`,
+without reopening the camera. An initial `STARTING` worker can also become
+`IDLE_PENDING` when no stream topic is subscribed; it resumes `STARTING` until
+its first frame arrives. The first frame after an actual wake includes device
+open, exposure settling, and first-capture time. Set `enabled: false` for
+continuous capture and the lowest first-frame latency.
 
 ### Subscribe to camera status
 

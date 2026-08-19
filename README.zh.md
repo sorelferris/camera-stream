@@ -152,10 +152,12 @@ idle_policy:
 只会通过新建 worker 唤醒对应相机。订阅 `b""` 是所有相机主题的前缀匹配，因此会
 唤醒全部相机。客户端协议无需任何改动。
 
-启用策略时，空闲相机通常经历以下状态：
-`IDLE_PENDING -> SLEEPING -> WAKING -> ONLINE`。没有任何流主题订阅时，最初的
-`STARTING` worker 也会变为 `IDLE_PENDING`。唤醒后的首帧时间包括设备打开、曝光
-稳定和首次采集。将 `enabled` 设为 `false` 可保持持续采集，获得最低的首帧延迟。
+启用策略后，只有需求持续缺失直至 worker 停止时，相机才会经历
+`IDLE_PENDING -> SLEEPING -> WAKING -> ONLINE`。若在 `IDLE_PENDING` 期间需求恢复，
+仍存活的 worker 会直接恢复到此前状态，通常为 `ONLINE`，不会重新打开相机。没有任何流
+主题订阅时，最初的 `STARTING` worker 也会变为 `IDLE_PENDING`；恢复需求后仍保持
+`STARTING`，直至首帧到达。真正唤醒后的首帧时间包括设备打开、曝光稳定和首次采集。将
+`enabled` 设为 `false` 可保持持续采集，获得最低的首帧延迟。
 
 ### 订阅相机状态
 
