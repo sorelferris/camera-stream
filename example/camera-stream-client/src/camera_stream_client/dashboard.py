@@ -245,23 +245,62 @@ class VideoWall:
                 canvas, x, hud_y, width, hud_height, color=(9, 12, 15), alpha=0.72
             )
             server = view["server"]
-            lines = [
-                f"rx {self._fps(metrics['instant_fps'])}  avg {self._fps(metrics['average_fps'])}  1% low {self._fps(metrics['one_percent_low_fps'])}",
-                f"interval {self._ms(metrics['frame_interval_ms'])}  p95 {self._ms(metrics['frame_interval_p95_ms'])}  p99 {self._ms(metrics['frame_interval_p99_ms'])}",
-                f"age {self._ms(view['frame_age_ms'])} (NTP/PTP)  rate {metrics['bitrate_mbps']:.2f} Mbps  payload {metrics['last_payload_size'] // 1024} KiB",
-                f"gap loss {self._percent(metrics['gap_loss_percent'])}  local loss {self._percent(metrics['local_loss_percent'])}  display {self._fps(metrics['display_fps'])}",
-                f"decode p50/p95 {self._ms(metrics['decode_p50_ms'])}/{self._ms(metrics['decode_p95_ms'])}  draw p95 {self._ms(metrics['draw_p95_ms'])}",
-                f"rx->display p95 {self._ms(metrics['receive_to_display_p95_ms'])}  {header.get('codec', '-')} {header.get('width', '-')}x{header.get('height', '-')}",
-                f"server capture {self._fps(server.get('capture_fps'))}  pub {self._fps(server.get('publish_fps'))}  capture cost {self._ms(server.get('capture_cost_ms'))}  IPC {self._ms(server.get('ipc_cost_ms'))}",
-                self._error_line(view, metrics),
+            metric_rows = [
+                [
+                    ("RX", self._fps(metrics["instant_fps"])),
+                    ("AVG", self._fps(metrics["average_fps"])),
+                    ("1% LOW", self._fps(metrics["one_percent_low_fps"])),
+                ],
+                [
+                    ("INTERVAL", self._ms(metrics["frame_interval_ms"])),
+                    ("P95", self._ms(metrics["frame_interval_p95_ms"])),
+                    ("P99", self._ms(metrics["frame_interval_p99_ms"])),
+                ],
+                [
+                    ("AGE", f"{self._ms(view['frame_age_ms'])}*"),
+                    ("RATE", f"{metrics['bitrate_mbps']:.2f} Mbps"),
+                    ("PAYLOAD", f"{metrics['last_payload_size'] // 1024} KiB"),
+                ],
+                [
+                    ("GAP LOSS", self._percent(metrics["gap_loss_percent"])),
+                    ("LOCAL LOSS", self._percent(metrics["local_loss_percent"])),
+                    ("DISPLAY", self._fps(metrics["display_fps"])),
+                ],
+                [
+                    ("DECODE P50", self._ms(metrics["decode_p50_ms"])),
+                    ("DECODE P95", self._ms(metrics["decode_p95_ms"])),
+                    ("DRAW P95", self._ms(metrics["draw_p95_ms"])),
+                ],
+                [
+                    ("RX->DISPLAY", self._ms(metrics["receive_to_display_p95_ms"])),
+                    ("CODEC", str(header.get("codec", "-")).upper()),
+                    ("SIZE", f"{header.get('width', '-')}x{header.get('height', '-')}"),
+                ],
+                [
+                    ("SERVER CAP", self._fps(server.get("capture_fps"))),
+                    ("SERVER PUB", self._fps(server.get("publish_fps"))),
+                    (
+                        "CAP/IPC",
+                        f"{self._ms(server.get('capture_cost_ms'))} / {self._ms(server.get('ipc_cost_ms'))}",
+                    ),
+                ],
             ]
-            for index, value in enumerate(lines[:available_lines]):
+            for index, fields in enumerate(metric_rows[:available_lines]):
+                self._draw_metric_row(
+                    canvas,
+                    fields,
+                    x + 8,
+                    hud_y + line * (index + 1),
+                    width - 16,
+                    scale,
+                )
+            if available_lines > len(metric_rows):
                 self._text(
                     canvas,
-                    self._ellipsize(value, width - 16, scale),
-                    (x + 8, hud_y + line * (index + 1)),
+                    self._ellipsize(self._error_line(view, metrics), width - 16, scale),
+                    (x + 8, hud_y + line * (len(metric_rows) + 1)),
                     scale,
-                    TEXT if index < 7 else RED,
+                    RED,
                 )
             return
 
@@ -273,36 +312,42 @@ class VideoWall:
         )
         graph_width = min(max(80, width // 4), 170) if compact_lines >= 2 else 0
         summary_width = width - graph_width - 20 if graph_width else width - 16
-        self._text(
+        compact_scale = self._font_scale(width, 0.4)
+        self._draw_metric_row(
             canvas,
-            self._ellipsize(
-                f"RX {self._fps(metrics['instant_fps'])}  AVG {self._fps(metrics['average_fps'])}  1% {self._fps(metrics['one_percent_low_fps'])}  {metrics['bitrate_mbps']:.1f} Mbps",
-                summary_width,
-                scale,
-            ),
-            (x + 8, hud_y + line),
-            scale,
-            TEXT,
+            [
+                ("RX", self._fps(metrics["instant_fps"])),
+                ("AVG", self._fps(metrics["average_fps"])),
+                ("1%", self._fps(metrics["one_percent_low_fps"])),
+                ("RATE", f"{metrics['bitrate_mbps']:.1f} Mbps"),
+            ],
+            x + 8,
+            hud_y + line,
+            summary_width,
+            compact_scale,
+            weights=[1, 1, 1, 1.3],
         )
         if compact_lines >= 2:
-            self._text(
+            self._draw_metric_row(
                 canvas,
-                self._ellipsize(
-                    f"age {self._ms(view['frame_age_ms'])}*  gap loss {self._percent(metrics['gap_loss_percent'])}  local loss {self._percent(metrics['local_loss_percent'])}",
-                    summary_width,
-                    scale,
-                ),
-                (x + 8, hud_y + line * 2),
-                scale,
-                MUTED,
+                [
+                    ("AGE", f"{self._ms(view['frame_age_ms'])}*"),
+                    ("GAP LOSS", self._percent(metrics["gap_loss_percent"])),
+                    ("LOCAL LOSS", self._percent(metrics["local_loss_percent"])),
+                ],
+                x + 8,
+                hud_y + line * 2,
+                summary_width,
+                compact_scale,
+                color=MUTED,
             )
             self._draw_chart(
                 canvas,
                 metrics["fps_chart"],
                 x + width - graph_width - 8,
-                hud_y + 7,
+                hud_y + 3,
                 graph_width,
-                max(18, compact_height - 14),
+                max(24, compact_height - 6),
             )
 
     def _draw_chart(
@@ -314,37 +359,39 @@ class VideoWall:
         width: int,
         height: int,
     ) -> None:
-        self._overlay(canvas, x, y, width, height, color=(18, 29, 33), alpha=0.8)
+        label_scale = 0.28 if height >= 34 else 0.24
+        label_height = max(9, round(11 * label_scale / 0.28))
+        chart_y = y + label_height + 3
+        chart_height = max(8, y + height - chart_y)
+        if chart_y + chart_height > canvas.shape[0]:
+            chart_height = max(1, canvas.shape[0] - chart_y)
+        self._overlay(
+            canvas, x, chart_y, width, chart_height, color=(18, 29, 33), alpha=0.8
+        )
         cv2.rectangle(
-            canvas, (x, y), (x + width - 1, y + height - 1), MUTED, 1, cv2.LINE_AA
+            canvas,
+            (x, chart_y),
+            (x + width - 1, chart_y + chart_height - 1),
+            MUTED,
+            1,
+            cv2.LINE_AA,
         )
         if not points:
             return
         low, high = self._chart_range(points)
         average = sum(points) / len(points)
-        label_scale = 0.32 if height >= 32 else 0.26
-        self._text(
+        self._draw_metric_row(
             canvas,
-            f"AVG {self._chart_label(average)}",
-            (x + 3, y + max(8, height // 2)),
+            [
+                ("MIN", self._chart_label(low)),
+                ("AVG", self._chart_label(average)),
+                ("MAX", self._chart_label(high)),
+            ],
+            x,
+            y + label_height,
+            width,
             label_scale,
-            MUTED,
-        )
-        self._right_text(
-            canvas,
-            f"MAX {self._chart_label(high)}",
-            x + width - 2,
-            y + max(8, round(10 * label_scale / 0.32)),
-            label_scale,
-            MUTED,
-        )
-        self._right_text(
-            canvas,
-            f"MIN {self._chart_label(low)}",
-            x + width - 2,
-            y + height - 2,
-            label_scale,
-            MUTED,
+            color=MUTED,
         )
         if len(points) < 2:
             return
@@ -353,10 +400,10 @@ class VideoWall:
             px = x + round(index * (width - 2) / max(len(points) - 1, 1)) + 1
             clipped = min(high, max(low, value))
             py = (
-                y
-                + height
+                chart_y
+                + chart_height
                 - 2
-                - round((clipped - low) / max(high - low, 0.01) * (height - 4))
+                - round((clipped - low) / max(high - low, 0.01) * (chart_height - 4))
             )
             coords.append((px, py))
         cv2.polylines(
@@ -415,6 +462,55 @@ class VideoWall:
             image, (target_width, target_height), interpolation=cv2.INTER_AREA
         )
         return resized, (width - target_width) // 2, (height - target_height) // 2
+
+    def _draw_metric_row(
+        self,
+        canvas: np.ndarray,
+        fields: list[tuple[str, str]],
+        x: int,
+        baseline_y: int,
+        width: int,
+        scale: float,
+        *,
+        weights: list[float] | None = None,
+        color: tuple[int, int, int] = TEXT,
+    ) -> None:
+        """Draw stable metric columns with fixed anchors for changing values."""
+        if not fields or width <= 0:
+            return
+        column_weights = weights or [1.0] * len(fields)
+        if len(column_weights) != len(fields) or sum(column_weights) <= 0:
+            raise ValueError("metric row weights must match fields and be positive")
+
+        gap = max(4, round(7 * scale / 0.4))
+        total_weight = sum(column_weights)
+        column_left = x
+        remaining_width = width
+        remaining_weight = total_weight
+        for index, ((label, value), weight) in enumerate(zip(fields, column_weights)):
+            if index == len(fields) - 1:
+                column_width = remaining_width
+            else:
+                column_width = max(
+                    0, round(remaining_width * weight / remaining_weight)
+                )
+            column_right = column_left + column_width
+            label_width = self._text_width(label, scale)
+            available_value_width = column_width - label_width - gap
+
+            if available_value_width >= self._text_width("...", scale):
+                display_value = self._ellipsize(value, available_value_width, scale)
+            else:
+                display_value = ""
+            self._text(canvas, label, (column_left, baseline_y), scale, MUTED)
+            if display_value:
+                self._right_text(
+                    canvas, display_value, column_right, baseline_y, scale, color
+                )
+
+            column_left = column_right
+            remaining_width -= column_width
+            remaining_weight -= weight
 
     @staticmethod
     def _overlay(

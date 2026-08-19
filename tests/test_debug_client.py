@@ -2,6 +2,8 @@ import sys
 import time
 from pathlib import Path
 
+import cv2
+import numpy as np
 import pytest
 
 CLIENT_SOURCE = Path(__file__).parents[1] / "example" / "camera-stream-client" / "src"
@@ -80,6 +82,55 @@ def test_cli_and_wildcard_endpoint() -> None:
 def test_chart_range_labels_keep_compact_fps_readable() -> None:
     assert VideoWall._chart_label(30.4) == "30"
     assert VideoWall._chart_label(9.75) == "9.8"
+
+
+def test_metric_row_keeps_value_anchors_stable(monkeypatch) -> None:
+    wall = VideoWall("tcp://stream", None)
+    anchors: list[int] = []
+    monkeypatch.setattr(
+        wall,
+        "_right_text",
+        lambda _canvas, _value, right, _y, _scale, _color: anchors.append(right),
+    )
+    canvas = np.zeros((60, 320, 3), dtype=np.uint8)
+    fields = [("RX", "9.9 fps"), ("AVG", "9.9 fps"), ("RATE", "1.0 Mbps")]
+    wall._draw_metric_row(canvas, fields, 8, 20, 304, 0.4)
+    wall._draw_metric_row(
+        canvas,
+        [("RX", "100.0 fps"), ("AVG", "240.0 fps"), ("RATE", "99.9 Mbps")],
+        8,
+        40,
+        304,
+        0.4,
+    )
+
+    assert anchors[:3] == anchors[3:]
+
+
+def test_chart_statistics_are_drawn_above_the_chart_box(monkeypatch) -> None:
+    wall = VideoWall("tcp://stream", None)
+    label_baselines: list[int] = []
+    chart_tops: list[int] = []
+    monkeypatch.setattr(
+        wall,
+        "_draw_metric_row",
+        lambda _canvas, _fields, _x, baseline, _width, _scale, **_kwargs: (
+            label_baselines.append(baseline)
+        ),
+    )
+    original_rectangle = cv2.rectangle
+
+    def record_rectangle(image, first, second, *args, **kwargs):
+        chart_tops.append(first[1])
+        return original_rectangle(image, first, second, *args, **kwargs)
+
+    monkeypatch.setattr(cv2, "rectangle", record_rectangle)
+    wall._draw_chart(
+        np.zeros((80, 160, 3), dtype=np.uint8), [28.0, 30.0, 29.0], 10, 10, 120, 40
+    )
+
+    assert label_baselines == [21]
+    assert chart_tops == [24]
 
 
 def test_focused_tile_uses_the_full_window() -> None:
