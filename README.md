@@ -26,15 +26,14 @@ Chinese documentation: [README.zh.md](README.zh.md)
 Linux service for publishing multiple local cameras over ZeroMQ with a
 latest-frame-wins policy.
 
-## Run
+## Quick Start
 
-### Run from PyPI
+`uvx` is Python/uv's equivalent of `npx`: it downloads a PyPI package into an
+isolated cached environment and runs its command without a manual install.
 
-After the server package is published, start an OpenCV/V4L2-only deployment
-without installing this repository:
+### 1. Run a server with `uvx`
 
-`uvx` is the Python/uv equivalent of `npx`: it resolves the PyPI package into
-an isolated cached environment and runs its command without a manual install.
+Start an OpenCV/V4L2 deployment without cloning this repository:
 
 ```bash
 uvx camera-stream-server --download-template
@@ -42,8 +41,8 @@ uvx camera-stream-server --download-template
 uvx camera-stream-server --config ./config.yaml
 ```
 
-RealSense and Orbbec drivers are optional package extras. Select the extras
-required by the cameras in the supplied configuration:
+RealSense and Orbbec drivers are package extras. Select those required by the
+configuration:
 
 ```bash
 uvx --from 'camera-stream-server[realsense,orbbec]' \
@@ -51,156 +50,48 @@ uvx --from 'camera-stream-server[realsense,orbbec]' \
 ```
 
 `--download-template` writes a starter OpenCV/V4L2 `config.yaml` into the
-current directory and refuses to overwrite an existing file. The configuration
-remains deployment-owned: adapt device paths, serial numbers, endpoints,
-encoding, and idle policy before starting the service. The legacy
-`camera-stream` command remains available in the installed package.
+current directory and refuses to overwrite an existing file. Adapt device
+paths, serial numbers, encoding, endpoints, and idle policy before starting.
 
-### Run from a checkout
+### 2. View every camera with `uvx`
 
-Install the drivers used by `config.yaml`, then run the service:
+The graphical client discovers configured cameras and displays all color
+streams with live diagnostics:
 
 ```bash
-uv sync --extra realsense --extra orbbec
-uv run camera-stream --config config.yaml
+uvx camera-stream-client --endpoint tcp://192.168.5.24:5555
 ```
 
-The standalone visual debugging client needs only the server PUB endpoint. It
-discovers camera names and image dimensions from frame headers, then displays
-every discovered color stream in an OpenCV mosaic with live HUD metrics:
+Use the server's reachable IP address, not its bind address `0.0.0.0`.
+
+### 3. Inspect topics with `uvx`
+
+The server package also provides ROS-like read-only diagnostics. These commands
+need no repository checkout and connect only to the public stream endpoint:
 
 ```bash
-uv run --package camera-stream-client camera-stream-client \
-  --endpoint=tcp://127.0.0.1:5555
-```
-
-For an isolated package run from this checkout, use
-`uvx --no-cache --from ./example/camera-stream-client camera-stream-client ...`.
-The `--no-cache` flag ensures that `uvx` rebuilds changed local source.
-
-For the three V4L2 devices available on this machine, use the ready-to-run
-demo configuration. The debugging client discovers all camera topics and
-shows them in a single adaptive video wall:
-
-```bash
-uv run camera-stream --config config.demo.yaml --tui
-uv run --package camera-stream-client camera-stream-client \
-  --endpoint=tcp://127.0.0.1:5555
-```
-
-Pass `--tui` to render a Rich dashboard in the same server process. The
-dashboard reads supervisor state directly, so it does not create a ZeroMQ
-client or compete for stream capacity. Without `--tui`, the service
-remains headless and suitable for systemd.
-
-```bash
-uv run camera-stream --config config.yaml --tui
-```
-
-## systemd Deployment
-
-Synchronize the environment with the camera drivers required by the selected
-configuration, then install and start the system service:
-
-```bash
-uv sync --extra realsense --extra orbbec
-sudo scripts/install_camera_stream_service.sh --config "$PWD/config.yaml"
-```
-
-The installer resolves absolute paths for `uv`, the project, and the YAML
-configuration; installs `camera-stream.service`; and starts it without the
-TUI. By default it runs as the user who invoked `sudo`, which must have read
-access to the project/configuration and permission to access the cameras.
-
-```bash
-systemctl status camera-stream.service
-journalctl -u camera-stream.service -f
-```
-
-Use `--user robot` to select a different runtime account, `--unit-name NAME`
-for another unit name, and `--no-start` to install without starting it. Rerun
-the installer after moving the checkout or changing the configuration path.
-
-### Publish the server package
-
-Build, validate, and dry-run a PyPI release:
-
-```bash
-scripts/publish_camera_stream_server.sh
-```
-
-Publish after setting a PyPI API token:
-
-```bash
-export UV_PUBLISH_TOKEN='pypi-...'
-scripts/publish_camera_stream_server.sh --publish
-```
-
-Use `--testpypi --publish` with a TestPyPI token before the production upload.
-The script rejects a dirty worktree unless `--allow-dirty` is explicitly set.
-
-## Topic Diagnostics
-
-`camera-stream-server topic` is a read-only PUB/SUB inspection CLI for a
-running deployment. Every command uses the public stream endpoint, replacing
-`0.0.0.0` with the server's reachable address for remote use:
-
-```bash
-camera-stream-server topic list --endpoint tcp://192.168.5.24:5555
-camera-stream-server topic list --endpoint tcp://192.168.5.24:5555 --verbose
-camera-stream-server topic info base_camera/color --endpoint tcp://192.168.5.24:5555
-camera-stream-server topic echo base_camera/color --endpoint tcp://192.168.5.24:5555 --count 1
-camera-stream-server topic hz base_camera/color --endpoint tcp://192.168.5.24:5555
-camera-stream-server topic bw base_camera/color --endpoint tcp://192.168.5.24:5555
+uvx camera-stream-server topic list --endpoint tcp://192.168.5.24:5555
+uvx camera-stream-server topic list --endpoint tcp://192.168.5.24:5555 --verbose
+uvx camera-stream-server topic info base_camera/color --endpoint tcp://192.168.5.24:5555
+uvx camera-stream-server topic echo base_camera/color --endpoint tcp://192.168.5.24:5555 --count 1
+uvx camera-stream-server topic hz base_camera/color --endpoint tcp://192.168.5.24:5555
+uvx camera-stream-server topic bw base_camera/color --endpoint tcp://192.168.5.24:5555
 ```
 
 `list` reads the status directory and lists all configured `<camera>/color`
 topics without waking cameras. `info` prints the latest status and a real frame
-header, while `echo`, `hz`, and `bw` subscribe to the selected image topic and
-therefore wake that camera under idle policy. `hz` reports received-frame rate;
-`bw` reports encoded image payload Mbps. `echo`, `hz`, and `bw` run until
-interrupted; pass `--count N` for a bounded diagnostic run. `hz` and `bw` also
-accept `--window SECONDS`.
+header. `echo`, `hz`, and `bw` subscribe to the selected image topic and wake
+that camera under idle policy. `hz` reports received-frame rate and `bw`
+reports encoded image payload Mbps. Pass `--count N` for a bounded run;
+`hz` and `bw` also accept `--window SECONDS`.
 
-## Client Quick Start
+## Integrate a Client
 
 The endpoints in `config.yaml` are server bind addresses. A remote client must
 replace `0.0.0.0` with the server's reachable IP address. With the bundled
 configuration, use `tcp://192.168.5.24:5555` for frames and status.
 
-### Idle camera policy
-
-`config.yaml` enables the following policy by default:
-
-```yaml
-idle_policy:
-  enabled: true
-  sleep_after_s: 60
-```
-
-The server exposes the same standard ZeroMQ PUB/SUB image protocol, but uses
-an XPUB socket internally to observe SUB topic subscriptions. This is **topic
-demand**, not TCP connection demand: a client that subscribes only to
-`status/` does not wake a camera.
-
-After the last matching subscription to `<camera>/color` disappears, the
-camera remains active for `sleep_after_s`. It then stops its worker, closes the
-camera SDK, and stops capture and JPEG encoding. A matching subscription wakes
-only that camera by spawning a fresh worker. A subscription to `b""` is a
-prefix match for every camera topic and therefore wakes all cameras. No client
-protocol change is required.
-
-With this policy enabled, a camera progresses through
-`IDLE_PENDING -> SLEEPING -> WAKING -> ONLINE` only when demand stays absent
-until the worker is stopped. If demand returns during `IDLE_PENDING`, the
-still-running worker resumes its previous state directly, usually `ONLINE`,
-without reopening the camera. An initial `STARTING` worker can also become
-`IDLE_PENDING` when no stream topic is subscribed; it resumes `STARTING` until
-its first frame arrives. The first frame after an actual wake includes device
-open, exposure settling, and first-capture time. Set `enabled: false` for
-continuous capture and the lowest first-frame latency.
-
-### Subscribe to camera status
+### Discover camera topics and status
 
 Status and frames use the same `stream_pub` endpoint. Subscribe to `status/`
 to receive an immediate full snapshot when the subscription becomes active,
@@ -287,6 +178,95 @@ the multipart length before treating a message as a three-part image frame. See
 [`example/camera-stream-client/`](example/camera-stream-client/) for the
 installable visual debugging client. It can be run locally with the `uvx`
 command above, then from PyPI as `uvx camera-stream-client ...` after release.
+
+### Idle camera policy
+
+`config.yaml` enables the following policy by default:
+
+```yaml
+idle_policy:
+  enabled: true
+  sleep_after_s: 60
+```
+
+The server uses XPUB internally to observe **topic demand**, not TCP connection
+demand: a client that subscribes only to `status/` does not wake a camera.
+
+After the last matching `<camera>/color` subscription disappears, the camera
+remains active for `sleep_after_s`, then stops its worker, closes the SDK, and
+stops capture and encoding. A matching image subscription wakes only that
+camera. A `b""` subscription is a prefix match for every topic and wakes all
+cameras.
+
+`IDLE_PENDING -> SLEEPING -> WAKING -> ONLINE` occurs only if demand remains
+absent until the worker stops. If demand returns during `IDLE_PENDING`, the
+still-running worker resumes its previous state, usually `ONLINE`, without
+reopening the camera. Set `enabled: false` for continuous capture and the
+lowest first-frame latency.
+
+## Run from a Checkout
+
+Install the drivers used by `config.yaml`, then run the service:
+
+```bash
+uv sync --extra realsense --extra orbbec
+uv run camera-stream --config config.yaml
+```
+
+Run the local client source with the workspace command:
+
+```bash
+uv run --package camera-stream-client camera-stream-client \
+  --endpoint=tcp://127.0.0.1:5555
+```
+
+For an isolated package run from this checkout, use
+`uvx --no-cache --from ./example/camera-stream-client camera-stream-client ...`.
+The `--no-cache` flag ensures that `uvx` rebuilds changed local source.
+
+Use the bundled V4L2 demo and the in-process server TUI when developing:
+
+```bash
+uv run camera-stream --config config.demo.yaml --tui
+```
+
+`--tui` renders the Rich server dashboard in the same process. Without it, the
+service remains headless and suitable for systemd.
+
+## systemd Deployment
+
+Synchronize the environment with required camera drivers, then install and
+start the service:
+
+```bash
+uv sync --extra realsense --extra orbbec
+sudo scripts/install_camera_stream_service.sh --config "$PWD/config.yaml"
+```
+
+The installer resolves absolute paths for `uv`, the project, and YAML
+configuration; installs `camera-stream.service`; and starts it without the
+TUI. By default it runs as the user who invoked `sudo`, which needs camera
+permissions.
+
+```bash
+systemctl status camera-stream.service
+journalctl -u camera-stream.service -f
+```
+
+Use `--user robot`, `--unit-name NAME`, or `--no-start` as needed. Rerun the
+installer after moving the checkout or configuration.
+
+## Publish the Server Package
+
+```bash
+scripts/publish_camera_stream_server.sh
+
+export UV_PUBLISH_TOKEN='pypi-...'
+scripts/publish_camera_stream_server.sh --publish
+```
+
+Use `--testpypi --publish` with a TestPyPI token before production. The script
+rejects a dirty worktree unless `--allow-dirty` is explicitly set.
 
 ## Architecture
 

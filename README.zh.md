@@ -24,14 +24,14 @@
 面向多路本地相机的 Linux ZeroMQ 推流服务，采用“最新帧优先”策略，支持
 OpenCV/V4L2、Intel RealSense 和 Orbbec 彩色相机。
 
-## 运行
-
-### 从 PyPI 运行
-
-服务端包发布后，无需安装本仓库即可启动仅使用 OpenCV/V4L2 的部署：
+## 快速开始
 
 `uvx` 是 Python/uv 中对应 `npx` 的一次性运行方式：它在隔离且可缓存的环境中解析
 PyPI 包并执行命令，无需手动安装。
+
+### 1. 使用 `uvx` 运行服务端
+
+无需克隆仓库，即可启动仅使用 OpenCV/V4L2 的部署：
 
 ```bash
 uvx camera-stream-server --download-template
@@ -39,7 +39,7 @@ uvx camera-stream-server --download-template
 uvx camera-stream-server --config ./config.yaml
 ```
 
-RealSense 与 Orbbec 驱动是可选包 extra。根据所提供配置中的相机选择所需 extra：
+RealSense 与 Orbbec 驱动是可选包 extra。根据配置中的相机选择所需 extra：
 
 ```bash
 uvx --from 'camera-stream-server[realsense,orbbec]' \
@@ -47,138 +47,42 @@ uvx --from 'camera-stream-server[realsense,orbbec]' \
 ```
 
 `--download-template` 会在当前目录写入 OpenCV/V4L2 起步配置 `config.yaml`，若目标文件
-已经存在则拒绝覆盖。配置仍属于部署配置，启动前请修改本机设备路径、序列号、端点、
-编码与空闲策略。安装包中仍保留兼容命令 `camera-stream`。
+已经存在则拒绝覆盖。启动前请修改本机设备路径、序列号、端点、编码和空闲策略。
 
-### 从检出目录运行
+### 2. 使用 `uvx` 查看全部相机
 
-安装 `config.yaml` 中所用相机的驱动依赖后启动服务：
+图形客户端会自动发现已配置的相机，并显示全部彩色流及实时诊断信息：
 
 ```bash
-uv sync --extra realsense --extra orbbec
-uv run camera-stream --config config.yaml
+uvx camera-stream-client --endpoint tcp://192.168.5.24:5555
 ```
 
-独立的图形调试客户端只需连接服务端的 PUB 端点。它会从帧头自动发现相机名称和
-分辨率，并以 OpenCV 拼墙显示所有已发现的彩色流及实时 HUD 指标：
+使用服务端实际可达的 IP，而不是绑定地址 `0.0.0.0`。
+
+### 3. 使用 `uvx` 诊断 topic
+
+服务端包提供类似 ROS 的只读诊断命令。无需检出仓库，只连接公共推流端点：
 
 ```bash
-uv run --package camera-stream-client camera-stream-client \
-  --endpoint=tcp://127.0.0.1:5555
-```
-
-若要从当前检出目录以隔离环境运行该客户端，请使用：
-`uvx --no-cache --from ./example/camera-stream-client camera-stream-client ...`。
-`--no-cache` 会确保 `uvx` 重新构建已变更的本地源码。
-
-本机若有三台可用的 V4L2 设备，可使用开箱即用的示例配置。调试客户端会发现所有
-相机主题，并以自适应视频墙显示：
-
-```bash
-uv run camera-stream --config config.demo.yaml --tui
-uv run --package camera-stream-client camera-stream-client \
-  --endpoint=tcp://127.0.0.1:5555
-```
-
-传入 `--tui` 会在同一个服务端进程中显示 Rich 仪表盘。它直接读取 Supervisor 的
-进程内状态，不会创建 ZeroMQ 客户端，也不会与推流容量竞争。未传入 `--tui` 时，
-服务保持无界面模式，适合通过 systemd 部署。
-
-```bash
-uv run camera-stream --config config.yaml --tui
-```
-
-## systemd 部署
-
-先按所选配置同步相机驱动依赖，再安装并启动系统服务：
-
-```bash
-uv sync --extra realsense --extra orbbec
-sudo scripts/install_camera_stream_service.sh --config "$PWD/config.yaml"
-```
-
-安装脚本会解析 `uv`、项目目录和 YAML 配置的绝对路径，安装
-`camera-stream.service`，并在不启用 TUI 的情况下启动它。默认以执行 `sudo` 的
-用户运行；该用户必须能够读取项目和配置文件，并具有访问相机的权限。
-
-```bash
-systemctl status camera-stream.service
-journalctl -u camera-stream.service -f
-```
-
-可通过 `--user robot` 指定其他运行账户，使用 `--unit-name NAME` 指定其他单元名称，
-使用 `--no-start` 只安装而不启动。移动检出目录或修改配置路径后，应重新运行安装脚本。
-
-### 发布服务端包
-
-构建、验证并执行 PyPI 发布 dry-run：
-
-```bash
-scripts/publish_camera_stream_server.sh
-```
-
-设置 PyPI API token 后发布：
-
-```bash
-export UV_PUBLISH_TOKEN='pypi-...'
-scripts/publish_camera_stream_server.sh --publish
-```
-
-正式发布前可用 TestPyPI token 执行 `--testpypi --publish`。除非显式传入
-`--allow-dirty`，脚本会拒绝在脏工作区中发布。
-
-## Topic 诊断命令
-
-`camera-stream-server topic` 是面向运行中服务的只读 PUB/SUB 检查 CLI。所有命令使用
-公共推流端点；远程使用时请将 `0.0.0.0` 替换为服务端实际可达地址：
-
-```bash
-camera-stream-server topic list --endpoint tcp://192.168.5.24:5555
-camera-stream-server topic list --endpoint tcp://192.168.5.24:5555 --verbose
-camera-stream-server topic info base_camera/color --endpoint tcp://192.168.5.24:5555
-camera-stream-server topic echo base_camera/color --endpoint tcp://192.168.5.24:5555 --count 1
-camera-stream-server topic hz base_camera/color --endpoint tcp://192.168.5.24:5555
-camera-stream-server topic bw base_camera/color --endpoint tcp://192.168.5.24:5555
+uvx camera-stream-server topic list --endpoint tcp://192.168.5.24:5555
+uvx camera-stream-server topic list --endpoint tcp://192.168.5.24:5555 --verbose
+uvx camera-stream-server topic info base_camera/color --endpoint tcp://192.168.5.24:5555
+uvx camera-stream-server topic echo base_camera/color --endpoint tcp://192.168.5.24:5555 --count 1
+uvx camera-stream-server topic hz base_camera/color --endpoint tcp://192.168.5.24:5555
+uvx camera-stream-server topic bw base_camera/color --endpoint tcp://192.168.5.24:5555
 ```
 
 `list` 读取状态目录并列出全部已配置的 `<camera>/color` 主题，不会唤醒相机。`info` 输出
 最近状态与真实帧头；`echo`、`hz` 和 `bw` 订阅选定图像主题，因此在空闲策略下会唤醒对应
-相机。`hz` 统计收到的帧率，`bw` 统计编码图像载荷的 Mbps。`echo`、`hz`、`bw` 默认持续
-运行直到中断；传入 `--count N` 可限制诊断帧数。`hz` 和 `bw` 还支持 `--window SECONDS`。
+相机。`hz` 统计收到的帧率，`bw` 统计编码图像载荷的 Mbps。传入 `--count N` 可限制诊断
+帧数；`hz` 和 `bw` 还支持 `--window SECONDS`。
 
-## 客户端快速开始
+## 自定义客户端接入
 
-`config.yaml` 中的端点是服务端的绑定地址。远端客户端必须将 `0.0.0.0` 替换为
-服务端的可达 IP。使用随附配置时，图像和状态均使用
-`tcp://192.168.5.24:5555`。
+`config.yaml` 中的端点是服务端绑定地址。远端客户端必须将 `0.0.0.0` 替换为服务端可达
+IP。使用随附配置时，图像和状态均使用 `tcp://192.168.5.24:5555`。
 
-### 空闲相机策略
-
-`config.yaml` 默认启用以下策略：
-
-```yaml
-idle_policy:
-  enabled: true
-  sleep_after_s: 60
-```
-
-服务端对外仍是标准的 ZeroMQ PUB/SUB 图像协议，但内部使用 XPUB socket 观察 SUB
-主题订阅。这里依据的是**主题需求**，而不是 TCP 连接需求：仅订阅 `status/` 的客户端
-不会唤醒相机。
-
-最后一个与 `<camera>/color` 匹配的订阅取消后，相机会继续工作 `sleep_after_s` 秒。
-随后服务端停止该相机 worker、关闭相机 SDK，并停止采集和 JPEG 编码。新的匹配订阅
-只会通过新建 worker 唤醒对应相机。订阅 `b""` 是所有相机主题的前缀匹配，因此会
-唤醒全部相机。客户端协议无需任何改动。
-
-启用策略后，只有需求持续缺失直至 worker 停止时，相机才会经历
-`IDLE_PENDING -> SLEEPING -> WAKING -> ONLINE`。若在 `IDLE_PENDING` 期间需求恢复，
-仍存活的 worker 会直接恢复到此前状态，通常为 `ONLINE`，不会重新打开相机。没有任何流
-主题订阅时，最初的 `STARTING` worker 也会变为 `IDLE_PENDING`；恢复需求后仍保持
-`STARTING`，直至首帧到达。真正唤醒后的首帧时间包括设备打开、曝光稳定和首次采集。将
-`enabled` 设为 `false` 可保持持续采集，获得最低的首帧延迟。
-
-### 订阅相机状态
+### 发现相机 topic 与状态
 
 状态与图像复用同一个 `stream_pub` 端点。`status/` 订阅生效后会立即收到完整快照，随后可
 收到即时的单相机状态事件及每秒一次的完整快照。两者均为尽力而为的 PUB/SUB 消息：晚连接
@@ -259,8 +163,90 @@ finally:
 `status/camera/<camera-name>` 事件和 `status/snapshot`，因此在将消息视作三段式图像帧前，
 需要检查消息段数。
 可安装的图形调试客户端见 [`example/camera-stream-client/`](example/camera-stream-client/)。
-它可以使用上面的本地 `uv` 命令运行；发布到 PyPI 后可通过
-`uvx camera-stream-client ...` 运行。
+
+### 空闲相机策略
+
+`config.yaml` 默认启用以下策略：
+
+```yaml
+idle_policy:
+  enabled: true
+  sleep_after_s: 60
+```
+
+服务端内部通过 XPUB socket 观察 SUB 的主题订阅。它依据的是**主题需求**，不是 TCP
+连接需求：仅订阅 `status/` 的客户端不会唤醒相机。
+
+最后一个与 `<camera>/color` 匹配的订阅消失后，相机会继续工作 `sleep_after_s` 秒，随后
+停止 worker、关闭相机 SDK，并停止采集和编码。新的匹配订阅只会唤醒对应相机。订阅 `b""`
+是所有主题的前缀匹配，因此会唤醒全部相机。
+
+只有需求持续缺失直至 worker 停止时，相机才会经历
+`IDLE_PENDING -> SLEEPING -> WAKING -> ONLINE`。若在 `IDLE_PENDING` 期间需求恢复，
+仍存活的 worker 会直接恢复到此前状态，通常为 `ONLINE`，不重新打开相机。将 `enabled`
+设为 `false` 可保持持续采集，获得最低的首帧延迟。
+
+## 从检出目录运行
+
+安装 `config.yaml` 中所用相机的驱动依赖后启动服务：
+
+```bash
+uv sync --extra realsense --extra orbbec
+uv run camera-stream --config config.yaml
+```
+
+从工作区运行本地客户端：
+
+```bash
+uv run --package camera-stream-client camera-stream-client \
+  --endpoint=tcp://127.0.0.1:5555
+```
+
+若要在隔离环境中从当前检出目录运行客户端，请使用
+`uvx --no-cache --from ./example/camera-stream-client camera-stream-client ...`；
+`--no-cache` 会确保 `uvx` 重新构建已变更的本地源码。
+
+本机若有三台可用的 V4L2 设备，可使用示例配置开发和查看服务端 TUI：
+
+```bash
+uv run camera-stream --config config.demo.yaml --tui
+```
+
+`--tui` 在同一个服务端进程中显示 Rich 仪表盘。它直接读取进程内状态，不创建 ZeroMQ
+客户端。未传入该参数时，服务保持无界面模式，适合 systemd 部署。
+
+## systemd 部署
+
+先按所选配置同步相机驱动依赖，再安装并启动系统服务：
+
+```bash
+uv sync --extra realsense --extra orbbec
+sudo scripts/install_camera_stream_service.sh --config "$PWD/config.yaml"
+```
+
+安装脚本会解析 `uv`、项目目录和 YAML 配置的绝对路径，安装
+`camera-stream.service`，并在不启用 TUI 的情况下启动它。默认以执行 `sudo` 的用户运行；
+该用户必须具有访问相机的权限。
+
+```bash
+systemctl status camera-stream.service
+journalctl -u camera-stream.service -f
+```
+
+可通过 `--user robot` 指定其他运行账户，使用 `--unit-name NAME` 指定其他单元名称，
+使用 `--no-start` 只安装而不启动。移动检出目录或修改配置路径后，应重新运行安装脚本。
+
+## 发布服务端包
+
+```bash
+scripts/publish_camera_stream_server.sh
+
+export UV_PUBLISH_TOKEN='pypi-...'
+scripts/publish_camera_stream_server.sh --publish
+```
+
+正式发布前可用 TestPyPI token 执行 `--testpypi --publish`。除非显式传入
+`--allow-dirty`，脚本会拒绝在脏工作区中发布。
 
 ## 架构
 
