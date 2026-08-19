@@ -82,6 +82,22 @@ def test_chart_range_labels_keep_compact_fps_readable() -> None:
     assert VideoWall._chart_label(9.75) == "9.8"
 
 
+def test_focused_tile_uses_the_full_window() -> None:
+    registry = CameraRegistry(set())
+    frame = parse_message([b"front/color", _header(), b"\x01\x02\x03"])
+    assert isinstance(frame, FrameMessage)
+    registry.receive(frame, time.monotonic_ns(), time.time_ns())
+    registry.consume_latest()
+    view = registry.views(time.monotonic_ns(), time.time_ns())[0]
+    wall = VideoWall("tcp://stream", None)
+    wall.focused = "front"
+
+    canvas = wall.render([view], {"last_success_age_s": None}, None)
+
+    assert wall._hits[0].rect == (0, 0, 1440, 900)
+    assert canvas.shape == (900, 1440, 3)
+
+
 def test_server_state_label_explains_missing_status_source() -> None:
     unknown = {"server": {}, "stream_state": None}
 

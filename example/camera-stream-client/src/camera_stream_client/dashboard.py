@@ -56,14 +56,18 @@ class VideoWall:
     ) -> np.ndarray:
         width, height = self._window_size()
         canvas = np.full((height, width, 3), BACKGROUND, dtype=np.uint8)
-        self._draw_global_bar(canvas, views, status, receiver_error)
-        display_views = views
         if self.focused:
-            display_views = [view for view in views if view["name"] == self.focused]
-            if not display_views:
+            focused_view = next(
+                (view for view in views if view["name"] == self.focused), None
+            )
+            if focused_view is None:
                 self.focused = None
-                display_views = views
-        self._hits = self._draw_grid(canvas, display_views)
+            else:
+                self._hits = self._draw_focus(canvas, focused_view)
+                self._draw_notice(canvas)
+                return canvas
+        self._draw_global_bar(canvas, views, status, receiver_error)
+        self._hits = self._draw_grid(canvas, views)
         self._draw_notice(canvas)
         return canvas
 
@@ -162,6 +166,12 @@ class VideoWall:
             self._draw_tile(canvas, view, x, y, cell_width, cell_height)
             hits.append(TileHit(view["name"], (x, y, cell_width, cell_height)))
         return hits
+
+    def _draw_focus(self, canvas: np.ndarray, view: dict[str, Any]) -> list[TileHit]:
+        """Render one selected tile over the full available window."""
+        height, width = canvas.shape[:2]
+        self._draw_tile(canvas, view, 0, 0, width, height)
+        return [TileHit(view["name"], (0, 0, width, height))]
 
     def _draw_tile(
         self,
@@ -305,13 +315,16 @@ class VideoWall:
         height: int,
     ) -> None:
         self._overlay(canvas, x, y, width, height, color=(18, 29, 33), alpha=0.8)
+        cv2.rectangle(
+            canvas, (x, y), (x + width - 1, y + height - 1), MUTED, 1, cv2.LINE_AA
+        )
         if len(points) < 2:
             return
         low, high = self._chart_range(points)
         label_scale = 0.32 if height >= 32 else 0.26
         self._right_text(
             canvas,
-            self._chart_label(high),
+            f"MAX {self._chart_label(high)}",
             x + width - 2,
             y + max(8, round(10 * label_scale / 0.32)),
             label_scale,
@@ -319,7 +332,7 @@ class VideoWall:
         )
         self._right_text(
             canvas,
-            self._chart_label(low),
+            f"MIN {self._chart_label(low)}",
             x + width - 2,
             y + height - 2,
             label_scale,
