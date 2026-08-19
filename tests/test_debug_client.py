@@ -8,6 +8,7 @@ CLIENT_SOURCE = Path(__file__).parents[1] / "example" / "camera-stream-client" /
 sys.path.insert(0, str(CLIENT_SOURCE))
 
 from camera_stream_client.cli import parse_args
+from camera_stream_client.dashboard import VideoWall
 from camera_stream_client.protocol import FrameMessage, ProtocolError, parse_message
 from camera_stream_client.state import CameraRegistry
 from camera_stream_client.transport import client_endpoint
@@ -57,8 +58,8 @@ def test_registry_tracks_local_overwrite_and_sequence_gap() -> None:
     registry.consume_latest()
     view = registry.views(time.monotonic_ns(), time.time_ns())[0]
 
-    assert view["metrics"]["client_overwrites"] == 1
-    assert view["metrics"]["source_gaps"] == 1
+    assert view["metrics"]["local_loss_percent"] == 50.0
+    assert view["metrics"]["gap_loss_percent"] == pytest.approx(100 / 3)
     assert view["image"].tolist() == [[[4, 5, 6]]]
 
 
@@ -74,3 +75,26 @@ def test_cli_and_wildcard_endpoint() -> None:
 
     assert args.camera == ["front", "side"]
     assert client_endpoint(args.endpoint) == "tcp://127.0.0.1:5555"
+
+
+def test_chart_range_labels_keep_compact_fps_readable() -> None:
+    assert VideoWall._chart_label(30.4) == "30"
+    assert VideoWall._chart_label(9.75) == "9.8"
+
+
+def test_server_state_label_explains_missing_status_source() -> None:
+    unknown = {"server": {}, "stream_state": None}
+
+    assert (
+        VideoWall("tcp://stream", None)._server_state_label(unknown) == "srv:DISABLED"
+    )
+    assert (
+        VideoWall("tcp://stream", "tcp://status")._server_state_label(unknown)
+        == "srv:WAITING"
+    )
+    assert (
+        VideoWall("tcp://stream", "tcp://status")._server_state_label(
+            {"server": {"state": "ONLINE"}, "stream_state": None}
+        )
+        == "srv:ONLINE"
+    )

@@ -218,10 +218,10 @@ class VideoWall:
         line = max(14, round(20 * scale / 0.45))
         title_height = line + 14
         self._overlay(canvas, x, y, width, title_height, color=(9, 12, 15), alpha=0.72)
-        server_state = view["server"].get("state") or view["stream_state"] or "-"
+        server_state = self._server_state_label(view)
         self._text(
             canvas,
-            f"{view['name']}  {view['local_state']}  srv:{server_state}",
+            f"{view['name']}  {view['local_state']}  {server_state}",
             (x + 8, y + line),
             scale,
             self._state_color(view["local_state"]),
@@ -239,7 +239,7 @@ class VideoWall:
                 f"rx {self._fps(metrics['instant_fps'])}  avg {self._fps(metrics['average_fps'])}  1% low {self._fps(metrics['one_percent_low_fps'])}",
                 f"interval {self._ms(metrics['frame_interval_ms'])}  p95 {self._ms(metrics['frame_interval_p95_ms'])}  p99 {self._ms(metrics['frame_interval_p99_ms'])}",
                 f"age {self._ms(view['frame_age_ms'])} (NTP/PTP)  rate {metrics['bitrate_mbps']:.2f} Mbps  payload {metrics['last_payload_size'] // 1024} KiB",
-                f"gap {metrics['source_gaps']}  overwrite {metrics['client_overwrites']}  display {self._fps(metrics['display_fps'])}",
+                f"gap loss {self._percent(metrics['gap_loss_percent'])}  local loss {self._percent(metrics['local_loss_percent'])}  display {self._fps(metrics['display_fps'])}",
                 f"decode p50/p95 {self._ms(metrics['decode_p50_ms'])}/{self._ms(metrics['decode_p95_ms'])}  draw p95 {self._ms(metrics['draw_p95_ms'])}",
                 f"rx->display p95 {self._ms(metrics['receive_to_display_p95_ms'])}  {header.get('codec', '-')} {header.get('width', '-')}x{header.get('height', '-')}",
                 f"server capture {self._fps(server.get('capture_fps'))}  pub {self._fps(server.get('publish_fps'))}  capture cost {self._ms(server.get('capture_cost_ms'))}  IPC {self._ms(server.get('ipc_cost_ms'))}",
@@ -278,7 +278,7 @@ class VideoWall:
             self._text(
                 canvas,
                 self._ellipsize(
-                    f"age {self._ms(view['frame_age_ms'])}*  gap {metrics['source_gaps']}  local drop {metrics['client_overwrites']}",
+                    f"age {self._ms(view['frame_age_ms'])}*  gap loss {self._percent(metrics['gap_loss_percent'])}  local loss {self._percent(metrics['local_loss_percent'])}",
                     summary_width,
                     scale,
                 ),
@@ -308,6 +308,23 @@ class VideoWall:
         if len(points) < 2:
             return
         low, high = self._chart_range(points)
+        label_scale = 0.32 if height >= 32 else 0.26
+        self._right_text(
+            canvas,
+            self._chart_label(high),
+            x + width - 2,
+            y + max(8, round(10 * label_scale / 0.32)),
+            label_scale,
+            MUTED,
+        )
+        self._right_text(
+            canvas,
+            self._chart_label(low),
+            x + width - 2,
+            y + height - 2,
+            label_scale,
+            MUTED,
+        )
         coords = []
         for index, value in enumerate(points):
             px = x + round(index * (width - 2) / max(len(points) - 1, 1)) + 1
@@ -332,6 +349,10 @@ class VideoWall:
             return max(0.0, lower - 1), upper + 1
         padding = (upper - lower) * 0.12
         return max(0.0, lower - padding), upper + padding
+
+    @staticmethod
+    def _chart_label(value: float) -> str:
+        return f"{value:.0f}" if value >= 10 else f"{value:.1f}"
 
     def _on_mouse(
         self, event: int, x: int, y: int, _flags: int, _userdata: Any
@@ -455,6 +476,12 @@ class VideoWall:
     def _state_color(state: str) -> tuple[int, int, int]:
         return {"LIVE": GREEN, "WAITING": YELLOW, "STALE": RED}.get(state, MUTED)
 
+    def _server_state_label(self, view: dict[str, Any]) -> str:
+        state = view["server"].get("state") or view["stream_state"]
+        if state:
+            return f"srv:{state}"
+        return "srv:WAITING" if self.status_endpoint else "srv:DISABLED"
+
     @staticmethod
     def _fps(value: float | None) -> str:
         return "-" if value is None else f"{value:.1f} fps"
@@ -462,6 +489,10 @@ class VideoWall:
     @staticmethod
     def _ms(value: float | None) -> str:
         return "-" if value is None else f"{value:.1f} ms"
+
+    @staticmethod
+    def _percent(value: float) -> str:
+        return f"{value:.1f}%"
 
     @staticmethod
     def _error_line(view: dict[str, Any], metrics: dict[str, Any]) -> str:

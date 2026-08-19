@@ -25,6 +25,8 @@ class CameraMetrics:
         self._draw_ms: deque[float] = deque(maxlen=ROLLING_WINDOW)
         self._receive_to_display_ms: deque[float] = deque(maxlen=ROLLING_WINDOW)
         self._bitrate_events: deque[tuple[int, int]] = deque()
+        self._source_gap_window: deque[int] = deque(maxlen=ROLLING_WINDOW)
+        self._overwrite_window: deque[bool] = deque(maxlen=ROLLING_WINDOW)
         self._last_received_ns = 0
         self._last_displayed_ns = 0
         self._last_sequence: int | None = None
@@ -32,8 +34,6 @@ class CameraMetrics:
         self._last_payload_size = 0
         self._received_frames = 0
         self._displayed_frames = 0
-        self._sequence_gaps = 0
-        self._client_overwrites = 0
         self._invalid = Counter()
 
     def record_received(
@@ -50,15 +50,16 @@ class CameraMetrics:
                 if delta > 0:
                     self._intervals_ns.append(delta)
             sequence = int(header["sequence"])
+            source_gap = 0
             if self._last_sequence is not None and sequence > self._last_sequence + 1:
-                self._sequence_gaps += sequence - self._last_sequence - 1
+                source_gap = sequence - self._last_sequence - 1
             self._last_sequence = sequence
             self._last_received_ns = received_ns
             self._last_header = dict(header)
             self._last_payload_size = payload_size
             self._received_frames += 1
-            if overwritten:
-                self._client_overwrites += 1
+            self._source_gap_window.append(source_gap)
+            self._overwrite_window.append(overwritten)
             self._bitrate_events.append((received_ns, payload_size))
             self._trim_bitrate(received_ns)
 
@@ -107,8 +108,8 @@ class CameraMetrics:
                     round(1_000_000_000 / value, 2)
                     for value in interval_values[-CHART_WINDOW:]
                 ],
-                "source_gaps": self._sequence_gaps,
-                "client_overwrites": self._client_overwrites,
+                "gap_loss_percent": self._gap_loss_percent(),
+                "local_loss_percent": self._local_loss_percent(),
                 "decode_p50_ms": self._percentile(self._decode_ms, 50),
                 "decode_p95_ms": self._percentile(self._decode_ms, 95),
                 "draw_p95_ms": self._percentile(self._draw_ms, 95),
@@ -125,6 +126,18 @@ class CameraMetrics:
         cutoff = now_ns - BITRATE_WINDOW_NS
         while self._bitrate_events and self._bitrate_events[0][0] < cutoff:
             self._bitrate_events.popleft()
+
+    def _gap_loss_percent(self) -> float:
+        received = len(self._source_gap_window)
+        missing = sum(self._source_gap_window)
+        return 0.0 if not missing else 100 * missing / (received + missing)
+
+    def _local_loss_percent(self) -> float:
+        return (
+            0.0
+            if not self._overwrite_window
+            else 100 * sum(self._overwrite_window) / len(self._overwrite_window)
+        )
 
     @staticmethod
     def _instant_fps(values: list[int]) -> float | None:
