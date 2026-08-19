@@ -41,7 +41,7 @@ wheels = [
 
 [[package]]
 name = "camera-stream-client"
-version = "0.1.5"
+version = "0.1.6"
 source = { editable = "example/camera-stream-client" }
 dependencies = [
     { name = "numpy" },
@@ -58,7 +58,7 @@ requires-dist = [
 
 [[package]]
 name = "camera-stream-server"
-version = "0.1.0"
+version = "0.1.1"
 source = { editable = "." }
 dependencies = [
     { name = "numpy" },
