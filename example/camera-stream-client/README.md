@@ -62,6 +62,25 @@ The first run downloads packages and creates an isolated environment; the
 OpenCV wheel is the largest download. Later runs reuse the `uv` or `pipx`
 cache.
 
+## Release
+
+Build and validate a release, then perform a PyPI dry run:
+
+```bash
+scripts/publish_camera_stream_client.sh
+```
+
+Upload only after setting a PyPI API token in the environment:
+
+```bash
+export UV_PUBLISH_TOKEN='pypi-...'
+scripts/publish_camera_stream_client.sh --publish
+```
+
+Use `--testpypi --publish` with a TestPyPI token to validate an upload before
+the production release. The script refuses a dirty git worktree by default;
+use `--allow-dirty` only for deliberate local builds.
+
 ## Arguments
 
 | Argument | Required | Description |
@@ -88,9 +107,10 @@ server.
 
 The video wall adapts its grid to the window size and camera count. Grid tiles
 preserve the source aspect ratio and use letterboxing rather than stretching
-the image. A focused tile fills the entire window using an aspect-ratio-
-preserving cover scale; excess image area is cropped from the center so that
-the focused view does not leave side bars.
+the image. When a tile is focused, the OpenCV window is resized to the largest
+source-aspect rectangle within the current video-wall bounds. The complete
+image then fills that focused window without stretching or cropping. Returning
+to the video wall restores the previous window size.
 
 ## Status Bar And Tile States
 

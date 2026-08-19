@@ -98,13 +98,12 @@ def test_focused_tile_uses_the_full_window() -> None:
     assert canvas.shape == (900, 1440, 3)
 
 
-def test_cover_fit_fills_focus_tile_without_side_bars() -> None:
+def test_focus_window_matches_source_aspect_without_cropping() -> None:
     image = __import__("numpy").zeros((480, 640, 3), dtype="uint8")
 
-    fitted, offset_x, offset_y = VideoWall._cover(image, 1440, 900)
+    size = VideoWall._focus_window_size(image, (1440, 900))
 
-    assert fitted.shape == (900, 1440, 3)
-    assert (offset_x, offset_y) == (0, 0)
+    assert size == (1200, 900)
 
 
 def test_server_state_label_explains_missing_status_source() -> None:

@@ -39,14 +39,19 @@ class VideoWall:
         self._hits: list[TileHit] = []
         self._notice: tuple[str, int] | None = None
         self._last_size = (1440, 900)
+        self._wall_size = self._last_size
+        self._focus_size: tuple[int, int] | None = None
+        self._window_open = False
 
     def open(self) -> None:
         cv2.namedWindow(WINDOW_TITLE, cv2.WINDOW_NORMAL)
         cv2.resizeWindow(WINDOW_TITLE, *self._last_size)
         cv2.setMouseCallback(WINDOW_TITLE, self._on_mouse)
+        self._window_open = True
 
     def close(self) -> None:
         cv2.destroyWindow(WINDOW_TITLE)
+        self._window_open = False
 
     def render(
         self,
@@ -63,9 +68,11 @@ class VideoWall:
             if focused_view is None:
                 self.focused = None
             else:
+                self._resize_for_focus(focused_view["image"])
                 self._hits = self._draw_focus(canvas, focused_view)
                 self._draw_notice(canvas)
                 return canvas
+        self._wall_size = (width, height)
         self._draw_global_bar(canvas, views, status, receiver_error)
         self._hits = self._draw_grid(canvas, views)
         self._draw_notice(canvas)
@@ -82,7 +89,7 @@ class VideoWall:
         elif key in (ord("e"), ord("E")):
             return "export"
         elif key in (13, 10) and self.focused:
-            self.focused = None
+            self._restore_wall_size()
         return None
 
     def notice(self, message: str, seconds: float = 2.5) -> None:
@@ -170,7 +177,7 @@ class VideoWall:
     def _draw_focus(self, canvas: np.ndarray, view: dict[str, Any]) -> list[TileHit]:
         """Render one selected tile over the full available window."""
         height, width = canvas.shape[:2]
-        self._draw_tile(canvas, view, 0, 0, width, height, fill=True)
+        self._draw_tile(canvas, view, 0, 0, width, height)
         return [TileHit(view["name"], (0, 0, width, height))]
 
     def _draw_tile(
@@ -181,16 +188,11 @@ class VideoWall:
         y: int,
         width: int,
         height: int,
-        *,
-        fill: bool = False,
     ) -> None:
         canvas[y : y + height, x : x + width] = (16, 20, 24)
         image = view["image"]
         if image is not None:
-            if fill:
-                fitted, offset_x, offset_y = self._cover(image, width, height)
-            else:
-                fitted, offset_x, offset_y = self._letterbox(image, width, height)
+            fitted, offset_x, offset_y = self._letterbox(image, width, height)
             target = canvas[
                 y + offset_y : y + offset_y + fitted.shape[0],
                 x + offset_x : x + offset_x + fitted.shape[1],
@@ -411,20 +413,32 @@ class VideoWall:
         )
         return resized, (width - target_width) // 2, (height - target_height) // 2
 
+    def _resize_for_focus(self, image: np.ndarray | None) -> None:
+        if image is None:
+            return
+        target = self._focus_window_size(image, self._wall_size)
+        if target == self._focus_size:
+            return
+        self._focus_size = target
+        if self._window_open:
+            cv2.resizeWindow(WINDOW_TITLE, *target)
+
+    def _restore_wall_size(self) -> None:
+        self.focused = None
+        self._focus_size = None
+        if self._window_open:
+            cv2.resizeWindow(WINDOW_TITLE, *self._wall_size)
+
     @staticmethod
-    def _cover(
-        image: np.ndarray, width: int, height: int
-    ) -> tuple[np.ndarray, int, int]:
-        """Scale an image to cover a tile, cropping the centered overflow."""
-        scale = max(width / image.shape[1], height / image.shape[0])
-        target_width = max(width, round(image.shape[1] * scale))
-        target_height = max(height, round(image.shape[0] * scale))
-        resized = cv2.resize(
-            image, (target_width, target_height), interpolation=cv2.INTER_AREA
-        )
-        left = max(0, (target_width - width) // 2)
-        top = max(0, (target_height - height) // 2)
-        return resized[top : top + height, left : left + width], 0, 0
+    def _focus_window_size(
+        image: np.ndarray, bounds: tuple[int, int]
+    ) -> tuple[int, int]:
+        """Find the largest source-aspect window contained by the wall bounds."""
+        bound_width, bound_height = bounds
+        aspect = image.shape[1] / image.shape[0]
+        if bound_width / bound_height > aspect:
+            return max(320, round(bound_height * aspect)), bound_height
+        return bound_width, max(240, round(bound_width / aspect))
 
     @staticmethod
     def _overlay(
