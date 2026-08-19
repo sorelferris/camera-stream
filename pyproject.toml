@@ -1,9 +1,10 @@
 [project]
-name = "camera-stream"
+name = "camera-stream-server"
 version = "0.1.0"
 description = "Low-latency multi-camera ZeroMQ streaming service"
 readme = "README.md"
 requires-python = "==3.10.*"
+authors = [{ name = "sorel", email = "sorel.ferris@foxmail.com" }]
 dependencies = [
     "numpy>=2.2.6",
     "opencv-python>=5.0.0.93",
@@ -15,6 +16,7 @@ dependencies = [
 
 [project.scripts]
 camera-stream = "camera_stream.streamer:main"
+camera-stream-server = "camera_stream.streamer:main"
 
 [project.optional-dependencies]
 realsense = ["pyrealsense2>=2.58.3.10794"]
@@ -39,3 +41,6 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+camera_stream = ["templates/*.yaml"]

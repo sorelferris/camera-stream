@@ -26,6 +26,29 @@ OpenCV/V4L2、Intel RealSense 和 Orbbec 彩色相机。
 
 ## 运行
 
+### 从 PyPI 运行
+
+服务端包发布后，无需安装本仓库即可启动仅使用 OpenCV/V4L2 的部署：
+
+```bash
+uvx camera-stream-server --download-template
+# 修改当前目录下的 ./config.yaml，填入本机设备与端点。
+uvx camera-stream-server --config ./config.yaml
+```
+
+RealSense 与 Orbbec 驱动是可选包 extra。根据所提供配置中的相机选择所需 extra：
+
+```bash
+uvx --from 'camera-stream-server[realsense,orbbec]' \
+  camera-stream-server --config /absolute/path/to/config.yaml
+```
+
+`--download-template` 会在当前目录写入 OpenCV/V4L2 起步配置 `config.yaml`，若目标文件
+已经存在则拒绝覆盖。配置仍属于部署配置，启动前请修改本机设备路径、序列号、端点、
+编码与空闲策略。安装包中仍保留兼容命令 `camera-stream`。
+
+### 从检出目录运行
+
 安装 `config.yaml` 中所用相机的驱动依赖后启动服务：
 
 ```bash
@@ -84,6 +107,24 @@ journalctl -u camera-stream.service -f
 
 可通过 `--user robot` 指定其他运行账户，使用 `--unit-name NAME` 指定其他单元名称，
 使用 `--no-start` 只安装而不启动。移动检出目录或修改配置路径后，应重新运行安装脚本。
+
+### 发布服务端包
+
+构建、验证并执行 PyPI 发布 dry-run：
+
+```bash
+scripts/publish_camera_stream_server.sh
+```
+
+设置 PyPI API token 后发布：
+
+```bash
+export UV_PUBLISH_TOKEN='pypi-...'
+scripts/publish_camera_stream_server.sh --publish
+```
+
+正式发布前可用 TestPyPI token 执行 `--testpypi --publish`。除非显式传入
+`--allow-dirty`，脚本会拒绝在脏工作区中发布。
 
 ## 客户端快速开始
 

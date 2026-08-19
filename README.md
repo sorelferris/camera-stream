@@ -28,6 +28,33 @@ latest-frame-wins policy.
 
 ## Run
 
+### Run from PyPI
+
+After the server package is published, start an OpenCV/V4L2-only deployment
+without installing this repository:
+
+```bash
+uvx camera-stream-server --download-template
+# Edit ./config.yaml for local devices and endpoints.
+uvx camera-stream-server --config ./config.yaml
+```
+
+RealSense and Orbbec drivers are optional package extras. Select the extras
+required by the cameras in the supplied configuration:
+
+```bash
+uvx --from 'camera-stream-server[realsense,orbbec]' \
+  camera-stream-server --config /absolute/path/to/config.yaml
+```
+
+`--download-template` writes a starter OpenCV/V4L2 `config.yaml` into the
+current directory and refuses to overwrite an existing file. The configuration
+remains deployment-owned: adapt device paths, serial numbers, endpoints,
+encoding, and idle policy before starting the service. The legacy
+`camera-stream` command remains available in the installed package.
+
+### Run from a checkout
+
 Install the drivers used by `config.yaml`, then run the service:
 
 ```bash
@@ -92,6 +119,24 @@ journalctl -u camera-stream.service -f
 Use `--user robot` to select a different runtime account, `--unit-name NAME`
 for another unit name, and `--no-start` to install without starting it. Rerun
 the installer after moving the checkout or changing the configuration path.
+
+### Publish the server package
+
+Build, validate, and dry-run a PyPI release:
+
+```bash
+scripts/publish_camera_stream_server.sh
+```
+
+Publish after setting a PyPI API token:
+
+```bash
+export UV_PUBLISH_TOKEN='pypi-...'
+scripts/publish_camera_stream_server.sh --publish
+```
+
+Use `--testpypi --publish` with a TestPyPI token before the production upload.
+The script rejects a dirty worktree unless `--allow-dirty` is explicitly set.
 
 ## Client Quick Start
 
