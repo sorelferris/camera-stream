@@ -318,10 +318,18 @@ class VideoWall:
         cv2.rectangle(
             canvas, (x, y), (x + width - 1, y + height - 1), MUTED, 1, cv2.LINE_AA
         )
-        if len(points) < 2:
+        if not points:
             return
         low, high = self._chart_range(points)
+        average = sum(points) / len(points)
         label_scale = 0.32 if height >= 32 else 0.26
+        self._text(
+            canvas,
+            f"AVG {self._chart_label(average)}",
+            (x + 3, y + max(8, height // 2)),
+            label_scale,
+            MUTED,
+        )
         self._right_text(
             canvas,
             f"MAX {self._chart_label(high)}",
@@ -338,6 +346,8 @@ class VideoWall:
             label_scale,
             MUTED,
         )
+        if len(points) < 2:
+            return
         coords = []
         for index, value in enumerate(points):
             px = x + round(index * (width - 2) / max(len(points) - 1, 1)) + 1

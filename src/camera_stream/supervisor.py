@@ -18,6 +18,7 @@ from zmq.utils.monitor import recv_monitor_message
 
 from camera_stream.config import CameraConfig, ServiceConfig
 from camera_stream.dashboard import Dashboard
+from camera_stream.demand import TopicDemand
 from camera_stream.protocol import json_bytes
 from camera_stream.worker import run_worker
 
@@ -35,6 +36,9 @@ class WorkerRecord:
     identity: bytes | None = None
     restart_attempt: int = 0
     next_restart_at: float = 0.0
+    demand_subscriptions: int = 0
+    idle_since_monotonic_ns: int | None = None
+    accept_after_monotonic_ns: int = 0
     status: dict[str, Any] = field(default_factory=dict)
 
 
@@ -60,7 +64,8 @@ class Supervisor:
         self.frame_pull.bind(self.frame_endpoint)
         self.control_router = self._socket(zmq.ROUTER, rcvhwm=10, sndhwm=10)
         self.control_router.bind(self.control_endpoint)
-        self.stream_pub = self._socket(zmq.PUB, sndhwm=1)
+        self.stream_pub = self._socket(zmq.XPUB, sndhwm=1)
+        self.stream_pub.setsockopt(zmq.XPUB_VERBOSE, 1)
         self.stream_pub.bind(config.endpoints.stream_pub)
         self.stream_monitor = self.stream_pub.get_monitor_socket(
             zmq.EVENT_ACCEPTED | zmq.EVENT_DISCONNECTED
@@ -68,7 +73,12 @@ class Supervisor:
         self.status_rep = self._socket(zmq.REP, rcvhwm=10, sndhwm=10)
         self.status_rep.bind(config.endpoints.status_rep)
         self.poller = zmq.Poller()
-        for socket in (self.frame_pull, self.control_router, self.status_rep):
+        for socket in (
+            self.frame_pull,
+            self.control_router,
+            self.status_rep,
+            self.stream_pub,
+        ):
             self.poller.register(socket, zmq.POLLIN)
         self.poller.register(self.stream_monitor, zmq.POLLIN)
         self.records = {
@@ -79,7 +89,11 @@ class Supervisor:
             )
             for camera in config.cameras
         }
+        for record in self.records.values():
+            if config.idle_policy.enabled:
+                record.status["idle_after_s"] = config.idle_policy.sleep_after_s
         self.clients: dict[int, dict[str, Any]] = {}
+        self.topic_demand = TopicDemand([camera.name for camera in config.cameras])
 
     def _socket(
         self, kind: int, *, rcvhwm: int | None = None, sndhwm: int | None = None
@@ -115,13 +129,15 @@ class Supervisor:
             "reconnect_attempt": 0,
             "last_error": None,
             "pid": None,
+            "demand_subscriptions": 0,
+            "idle_after_s": None,
         }
 
     def start_workers(self) -> None:
         for record in self.records.values():
             self._start_worker(record)
 
-    def _start_worker(self, record: WorkerRecord) -> None:
+    def _start_worker(self, record: WorkerRecord, *, state: str = "STARTING") -> None:
         record.stop.clear()
         process = mp.get_context("spawn").Process(
             target=run_worker,
@@ -137,7 +153,7 @@ class Supervisor:
         record.process = process
         record.identity = None
         record.status["pid"] = process.pid
-        self._set_state(record, "STARTING")
+        self._set_state(record, state)
 
     def _set_state(
         self,
@@ -172,6 +188,96 @@ class Supervisor:
                 flags=zmq.DONTWAIT,
             )
 
+    def _handle_stream_subscriptions(self) -> None:
+        """Apply standard SUB topic changes emitted by the XPUB socket."""
+        changed_names: set[str] = set()
+        while True:
+            try:
+                event = self.stream_pub.recv(flags=zmq.DONTWAIT)
+            except zmq.Again:
+                break
+            changed_names.update(self.topic_demand.apply(event))
+        for name in changed_names:
+            record = self.records[name]
+            record.demand_subscriptions = self.topic_demand.count(name)
+            record.status["demand_subscriptions"] = record.demand_subscriptions
+            self._reconcile_camera_idle(record, time.monotonic_ns())
+
+    def _reconcile_idle_policy(self) -> None:
+        if not self.config.idle_policy.enabled:
+            return
+        now_ns = time.monotonic_ns()
+        for record in self.records.values():
+            self._reconcile_camera_idle(record, now_ns)
+
+    def _reconcile_camera_idle(self, record: WorkerRecord, now_ns: int) -> None:
+        """Move one camera between active, pending, sleeping, and waking states."""
+        if not self.config.idle_policy.enabled:
+            return
+        if record.demand_subscriptions:
+            record.idle_since_monotonic_ns = None
+            if record.process is None or not record.process.is_alive():
+                self._wake_worker(record)
+            elif record.status.get("state") == "IDLE_PENDING":
+                self._set_state(record, "WAKING")
+            return
+
+        state = record.status.get("state")
+        if state in {"SLEEPING", "CONFIG_ERROR"}:
+            return
+        if record.idle_since_monotonic_ns is None:
+            record.idle_since_monotonic_ns = now_ns
+            self._set_state(record, "IDLE_PENDING")
+            return
+        sleep_after_ns = int(self.config.idle_policy.sleep_after_s * 1_000_000_000)
+        if now_ns - record.idle_since_monotonic_ns >= sleep_after_ns:
+            self._sleep_worker(record)
+
+    def _wake_worker(self, record: WorkerRecord) -> None:
+        if record.status.get("state") == "CONFIG_ERROR":
+            return
+        if record.process is not None and not record.process.is_alive():
+            record.process.join(timeout=0)
+            record.process = None
+            record.identity = None
+        record.restart_attempt = 0
+        record.next_restart_at = 0.0
+        record.status["last_heartbeat_ns"] = 0
+        record.accept_after_monotonic_ns = time.monotonic_ns()
+        self._start_worker(record, state="WAKING")
+
+    def _sleep_worker(self, record: WorkerRecord) -> None:
+        self._stop_worker(record)
+        record.idle_since_monotonic_ns = None
+        record.status.update(
+            {
+                "pid": None,
+                "capture_fps": 0,
+                "publish_fps": 0,
+                "last_heartbeat_ns": 0,
+            }
+        )
+        self._set_state(record, "SLEEPING")
+
+    def _stop_worker(self, record: WorkerRecord) -> None:
+        record.stop.set()
+        if record.identity is not None:
+            try:
+                self.control_router.send_multipart(
+                    [record.identity, json_bytes({"type": "stop"})],
+                    flags=zmq.DONTWAIT,
+                )
+            except zmq.Again:
+                pass
+        process = record.process
+        if process is not None:
+            process.join(timeout=2.0)
+            if process.is_alive():
+                process.terminate()
+                process.join(timeout=1.0)
+        record.process = None
+        record.identity = None
+
     def _handle_control(self) -> None:
         identity, payload = self.control_router.recv_multipart()
         try:
@@ -182,25 +288,39 @@ class Supervisor:
         record = self.records.get(name)
         if record is None:
             return
+        if (
+            self.config.idle_policy.enabled
+            and not record.demand_subscriptions
+            and record.status.get("state") == "SLEEPING"
+        ):
+            return
         record.identity = identity
         record.status["last_heartbeat_ns"] = time.monotonic_ns()
         if message.get("type") == "hello":
             record.status["pid"] = message.get("pid")
         elif message.get("type") == "state":
-            if message.get("state") == "ONLINE":
+            worker_state = message.get("state", "OFFLINE")
+            if worker_state == "ONLINE":
                 record.restart_attempt = 0
-            self._set_state(
-                record,
-                message.get("state", "OFFLINE"),
-                error=message.get("error"),
-                attempt=message.get("reconnect_attempt"),
-            )
+            if not (
+                self.config.idle_policy.enabled
+                and not record.demand_subscriptions
+                and worker_state == "ONLINE"
+            ):
+                self._set_state(
+                    record,
+                    worker_state,
+                    error=message.get("error"),
+                    attempt=message.get("reconnect_attempt"),
+                )
         elif message.get("type") == "capture":
             record.status["last_capture_monotonic_ns"] = message.get(
                 "captured_monotonic_ns", 0
             )
             record.status["last_capture_utc_ns"] = message.get("captured_utc_ns", 0)
-            if record.status.get("state") != "ONLINE":
+            if record.status.get("state") != "ONLINE" and not (
+                self.config.idle_policy.enabled and not record.demand_subscriptions
+            ):
                 self._set_state(record, "ONLINE")
         elif message.get("type") == "heartbeat":
             metrics = message.get("metrics", {})
@@ -228,6 +348,11 @@ class Supervisor:
             name = frame["camera"]
             record = self.records[name]
         except (KeyError, TypeError, UnicodeDecodeError, json.JSONDecodeError):
+            return
+        if (
+            int(frame.get("captured_monotonic_ns", 0))
+            < record.accept_after_monotonic_ns
+        ):
             return
         topic = f"{name}/color".encode()
         service_started_ns = time.monotonic_ns()
@@ -288,6 +413,11 @@ class Supervisor:
             ),
             "service": {
                 "worker_count": len(self.records),
+                "active_worker_count": sum(
+                    1
+                    for record in self.records.values()
+                    if record.process is not None and record.process.is_alive()
+                ),
                 "client_count": len(self.clients),
                 "last_service_cost_ms": self.last_service_cost_ms,
                 "last_supervisor_cost_ms": self.last_supervisor_cost_ms,
@@ -297,6 +427,10 @@ class Supervisor:
                 ),
                 "stream_pub": self.config.endpoints.stream_pub,
                 "status_rep": self.config.endpoints.status_rep,
+                "idle_policy": {
+                    "enabled": self.config.idle_policy.enabled,
+                    "sleep_after_s": self.config.idle_policy.sleep_after_s,
+                },
             },
             "clients": clients,
             "cameras": [dict(record.status) for record in self.records.values()],
@@ -390,6 +524,11 @@ class Supervisor:
                 process.join(timeout=0)
                 if record.status.get("state") == "CONFIG_ERROR":
                     continue
+                if self.config.idle_policy.enabled and not record.demand_subscriptions:
+                    record.process = None
+                    record.identity = None
+                    self._set_state(record, "SLEEPING")
+                    continue
                 record.restart_attempt += 1
                 if now_seconds < record.next_restart_at:
                     continue
@@ -403,7 +542,7 @@ class Supervisor:
                 )
                 self._start_worker(record)
             elif (
-                record.status.get("state") in {"OFFLINE", "RECOVERING"}
+                record.status.get("state") in {"OFFLINE", "RECOVERING", "WAKING"}
                 and now_ns - record.status.get("state_since_monotonic_ns", now_ns)
                 > RECOVERY_WATCHDOG_TIMEOUT_NS
             ):
@@ -448,7 +587,10 @@ class Supervisor:
                     self._handle_status()
                 if self.stream_monitor in events:
                     self._handle_stream_monitor()
+                if self.stream_pub in events:
+                    self._handle_stream_subscriptions()
                 self._monitor_workers()
+                self._reconcile_idle_policy()
                 if dashboard is not None:
                     dashboard.update()
         finally:
@@ -461,21 +603,7 @@ class Supervisor:
             return
         self.stop_requested = True
         for record in self.records.values():
-            record.stop.set()
-            if record.identity is not None:
-                try:
-                    self.control_router.send_multipart(
-                        [record.identity, json_bytes({"type": "stop"})],
-                        flags=zmq.DONTWAIT,
-                    )
-                except zmq.Again:
-                    pass
-        for record in self.records.values():
-            if record.process is not None:
-                record.process.join(timeout=2.0)
-                if record.process.is_alive():
-                    record.process.terminate()
-                    record.process.join(timeout=1.0)
+            self._stop_worker(record)
         for socket in (
             self.status_rep,
             self.stream_pub,

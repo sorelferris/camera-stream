@@ -52,6 +52,13 @@ class EncodingConfig(StrictModel):
         return self
 
 
+class IdlePolicyConfig(StrictModel):
+    """Stop idle camera workers and reopen them when a stream is subscribed."""
+
+    enabled: bool = False
+    sleep_after_s: float = Field(default=60.0, gt=0, le=86_400)
+
+
 class CameraConfig(StrictModel):
     name: str = Field(min_length=1, max_length=80, pattern=r"^[A-Za-z0-9_.-]+$")
     driver: Literal["opencv", "realsense", "orbbec"]
@@ -76,6 +83,7 @@ class CameraConfig(StrictModel):
 class ServiceConfig(StrictModel):
     endpoints: EndpointConfig
     cameras: list[CameraConfig] = Field(min_length=1, max_length=64)
+    idle_policy: IdlePolicyConfig = Field(default_factory=IdlePolicyConfig)
 
     @model_validator(mode="after")
     def validate_names(self) -> ServiceConfig:

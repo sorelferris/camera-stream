@@ -124,6 +124,9 @@ server state:
 | `WAITING` | The client has not received the first frame. A camera requested with `--camera`, or discovered through a status snapshot, appears in this state first. |
 | `STALE` | The camera was seen before, but no new frame has arrived for `max(2 seconds, 3 x receive interval P50)`. The last image and historical metrics remain visible for troubleshooting. |
 | `srv:ONLINE` / `OFFLINE` / `RECOVERING` / `CONFIG_ERROR` | Authoritative state reported by the server status endpoint. |
+| `srv:IDLE_PENDING` | No client currently subscribes to this camera. The server is waiting for the configured idle timeout before stopping its worker. |
+| `srv:SLEEPING` | No camera stream subscriber remained through the idle timeout. The server has stopped the worker, closed the camera SDK, and stopped capture and encoding. Status polling alone does not wake it. |
+| `srv:WAKING` | A SUB subscription for this camera arrived and the server is starting a new worker. The state becomes `ONLINE` after the first frame. |
 | `srv:WAITING` | A status endpoint was configured, but the first status snapshot has not arrived. |
 | `srv:DISABLED` | No `--status-endpoint` was provided, so no server state source is available. |
 

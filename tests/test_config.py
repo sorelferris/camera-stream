@@ -52,3 +52,16 @@ def test_driver_device_shape_is_strict() -> None:
     camera["device"] = {"path": "/dev/video0"}
     with pytest.raises(ValidationError):
         ServiceConfig.model_validate(valid_service(camera))
+
+
+def test_idle_policy_is_optional_and_validated() -> None:
+    default = ServiceConfig.model_validate(valid_service())
+    assert not default.idle_policy.enabled
+
+    document = valid_service()
+    document["idle_policy"] = {"enabled": True, "sleep_after_s": 15}
+    assert ServiceConfig.model_validate(document).idle_policy.sleep_after_s == 15
+
+    document["idle_policy"]["sleep_after_s"] = 0
+    with pytest.raises(ValidationError):
+        ServiceConfig.model_validate(document)

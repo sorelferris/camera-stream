@@ -21,6 +21,17 @@ class StuckWorkerProcess:
         self.terminated = True
 
 
+class ExitedWorkerProcess:
+    def __init__(self) -> None:
+        self.joined = False
+
+    def is_alive(self) -> bool:
+        return False
+
+    def join(self, timeout: float | None = None) -> None:
+        self.joined = True
+
+
 def service_config() -> ServiceConfig:
     return ServiceConfig.model_validate(
         {
@@ -39,6 +50,12 @@ def service_config() -> ServiceConfig:
             ],
         }
     )
+
+
+def idle_service_config() -> ServiceConfig:
+    document = service_config().model_dump(mode="json")
+    document["idle_policy"] = {"enabled": True, "sleep_after_s": 1}
+    return ServiceConfig.model_validate(document)
 
 
 def test_first_capture_updates_status_without_waiting_for_heartbeat() -> None:
@@ -136,3 +153,81 @@ def test_client_ip_reads_tcp_peer_address() -> None:
     finally:
         client.close()
         listener.close()
+
+
+def test_idle_camera_sleeps_after_grace_period(monkeypatch) -> None:
+    supervisor = Supervisor(idle_service_config())
+    record = supervisor.records["cam"]
+    record.process = StuckWorkerProcess()
+    stopped = []
+    monkeypatch.setattr(supervisor, "_stop_worker", stopped.append)
+    try:
+        supervisor._reconcile_camera_idle(record, time.monotonic_ns())
+        assert record.status["state"] == "IDLE_PENDING"
+        supervisor._reconcile_camera_idle(record, time.monotonic_ns() + 1_000_000_000)
+        assert stopped == [record]
+        assert record.status["state"] == "SLEEPING"
+        assert record.status["capture_fps"] == 0
+    finally:
+        supervisor.shutdown()
+
+
+def test_subscription_wakes_sleeping_camera(monkeypatch) -> None:
+    supervisor = Supervisor(idle_service_config())
+    record = supervisor.records["cam"]
+    record.status["state"] = "SLEEPING"
+    starts = []
+    monkeypatch.setattr(
+        supervisor,
+        "_start_worker",
+        lambda item, **kwargs: starts.append((item, kwargs)),
+    )
+    try:
+        record.demand_subscriptions = 1
+        supervisor._reconcile_camera_idle(record, time.monotonic_ns())
+        assert starts == [(record, {"state": "WAKING"})]
+    finally:
+        supervisor.shutdown()
+
+
+def test_waking_reaps_an_exited_worker_before_starting(monkeypatch) -> None:
+    supervisor = Supervisor(idle_service_config())
+    record = supervisor.records["cam"]
+    exited = ExitedWorkerProcess()
+    record.process = exited
+    starts = []
+    monkeypatch.setattr(
+        supervisor,
+        "_start_worker",
+        lambda item, **kwargs: starts.append((item, kwargs)),
+    )
+    try:
+        supervisor._wake_worker(record)
+        assert exited.joined
+        assert record.process is None
+        assert starts == [(record, {"state": "WAKING"})]
+    finally:
+        supervisor.shutdown()
+
+
+def test_xpub_subscription_tracks_only_the_requested_camera(monkeypatch) -> None:
+    supervisor = Supervisor(idle_service_config())
+    monkeypatch.setattr(
+        supervisor,
+        "_start_worker",
+        lambda record, **kwargs: supervisor._set_state(record, kwargs["state"]),
+    )
+    context = zmq.Context()
+    subscriber = context.socket(zmq.SUB)
+    subscriber.setsockopt(zmq.LINGER, 0)
+    subscriber.setsockopt(zmq.SUBSCRIBE, b"cam/color")
+    subscriber.connect(supervisor.stream_pub.getsockopt_string(zmq.LAST_ENDPOINT))
+    try:
+        assert supervisor.stream_pub.poll(1000) == zmq.POLLIN
+        supervisor._handle_stream_subscriptions()
+        assert supervisor.records["cam"].demand_subscriptions == 1
+        assert supervisor.records["cam"].status["state"] == "WAKING"
+    finally:
+        subscriber.close(0)
+        context.term()
+        supervisor.shutdown()

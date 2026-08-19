@@ -121,7 +121,10 @@ class Dashboard:
         details = Text()
         details.append("frame PULL  HWM: 1\n", style="bold magenta")
         details.append("control ROUTER\n", style="dim")
-        details.append(f"workers      {service.get('worker_count', 0)}")
+        details.append(
+            f"workers      {service.get('active_worker_count', 0)}/"
+            f"{service.get('worker_count', 0)}"
+        )
         return Panel(
             details,
             title="SUPERVISOR",
@@ -183,6 +186,9 @@ class Dashboard:
             "ONLINE": "green",
             "RECOVERING": "yellow",
             "STARTING": "yellow",
+            "WAKING": "yellow",
+            "IDLE_PENDING": "yellow",
+            "SLEEPING": "dim",
             "OFFLINE": "red",
             "CONFIG_ERROR": "red",
         }.get(state, "dim")

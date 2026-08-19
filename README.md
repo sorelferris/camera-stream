@@ -1,8 +1,21 @@
 # camera-stream
 
+> [!TIP]
+> **camera-stream** is a Linux service that turns multiple local color cameras
+> into a live ZeroMQ broadcast. It is designed for low-latency internal-network
+> deployments where a current frame matters more than preserving every frame.
+>
+> | Capability | Design |
+> | --- | --- |
+> | Camera drivers | OpenCV/V4L2, Intel RealSense, and Orbbec |
+> | Image transport | One-to-many ZeroMQ PUB/SUB, with per-camera topics |
+> | Real-time policy | Latest-frame-wins: bounded capacity-one stages drop stale frames rather than queue them |
+> | Payload | Per-camera JPEG or `raw_bgr8`, explicitly configured quality/format |
+> | On-demand capture | Per-camera idle sleep/wake driven by stream topic subscriptions |
+> | Observability | Separate REP status API, stream status events, and an optional Rich server dashboard |
+
 Linux service for publishing multiple local cameras over ZeroMQ with a
-latest-frame-wins policy. It supports OpenCV/V4L2, Intel RealSense, and Orbbec
-color cameras.
+latest-frame-wins policy.
 
 ## Run
 
@@ -18,10 +31,14 @@ discovers camera names and image dimensions from frame headers, then displays
 every discovered color stream in an OpenCV mosaic with live HUD metrics:
 
 ```bash
-uvx --from ./example/camera-stream-client camera-stream-client \
+uv run --package camera-stream-client camera-stream-client \
   --endpoint=tcp://127.0.0.1:5555 \
   --status-endpoint=tcp://127.0.0.1:5556
 ```
+
+For an isolated package run from this checkout, use
+`uvx --no-cache --from ./example/camera-stream-client camera-stream-client ...`.
+The `--no-cache` flag ensures that `uvx` rebuilds changed local source.
 
 For the three V4L2 devices available on this machine, use the ready-to-run
 demo configuration. The debugging client discovers all camera topics and
@@ -29,7 +46,7 @@ shows them in a single adaptive video wall:
 
 ```bash
 uv run camera-stream --config config.demo.yaml --tui
-uvx --from ./example/camera-stream-client camera-stream-client \
+uv run --package camera-stream-client camera-stream-client \
   --endpoint=tcp://127.0.0.1:5555 \
   --status-endpoint=tcp://127.0.0.1:5556
 ```
@@ -49,6 +66,35 @@ The endpoints in `config.yaml` are server bind addresses. A remote client must
 replace `0.0.0.0` with the server's reachable IP address. With the bundled
 configuration, use `tcp://192.168.5.24:5555` for frames and
 `tcp://192.168.5.24:5556` for status.
+
+### Idle camera policy
+
+`config.yaml` enables the following policy by default:
+
+```yaml
+idle_policy:
+  enabled: true
+  sleep_after_s: 60
+```
+
+The server exposes the same standard ZeroMQ PUB/SUB image protocol, but uses
+an XPUB socket internally to observe SUB topic subscriptions. This is **topic
+demand**, not TCP connection demand: a client that only queries `status_rep`
+does not wake a camera.
+
+After the last matching subscription to `<camera>/color` disappears, the
+camera remains active for `sleep_after_s`. It then stops its worker, closes the
+camera SDK, and stops capture and JPEG encoding. A matching subscription wakes
+only that camera by spawning a fresh worker. A subscription to `b""` is a
+prefix match for every camera topic and therefore wakes all cameras. No client
+protocol change is required.
+
+With this policy enabled, a camera normally progresses through
+`IDLE_PENDING -> SLEEPING -> WAKING -> ONLINE`. The initial `STARTING` worker
+also becomes `IDLE_PENDING` when no stream topic is subscribed. The first
+frame after wake includes device open, exposure settling, and first-capture
+time. Set `enabled: false` for continuous capture and the lowest first-frame
+latency.
 
 ### Request camera status
 
@@ -144,9 +190,11 @@ flowchart LR
 
     subgraph Server["camera-stream server process"]
         Supervisor["SUPERVISOR\nIPC PULL HWM 1\ncontrol ROUTER"]
-        Service["SERVICE\nPUB SNDHWM 1\nstatus REP"]
+        Demand["Topic demand\nXPUB subscription events"]
+        Service["SERVICE\nXPUB SNDHWM 1\nPUB/SUB compatible\nstatus REP"]
         TUI["Rich TUI\n--tui\nin-process snapshot"]
         Supervisor -. "logical handoff\nper-frame cost" .-> Service
+        Demand --> Supervisor
         Supervisor --> TUI
         Service --> TUI
     end
@@ -159,7 +207,9 @@ flowchart LR
     Config --> Server
     Encode -->|"IPC PUSH\nframe header + payload"| Supervisor
     W1 -. "DEALER control\nhello/state/heartbeat" .-> Supervisor
-    Service -->|"TCP PUB\n<camera>/color\nJPEG / BGR"| ClientA
+    ClientA -. "SUB topic demand" .-> Demand
+    ClientB -. "SUB topic demand" .-> Demand
+    Service -->|"TCP PUB/SUB\n<camera>/color\nJPEG / BGR"| ClientA
     Service --> ClientB
     Service -->|"TCP REP\nget_status"| StatusClient
 
@@ -168,21 +218,22 @@ flowchart LR
     classDef service fill:#e8f0fb,stroke:#3d6ea8,color:#1c3554
     classDef client fill:#fff4df,stroke:#b47720,color:#4c3210
     class W1,Driver,Encode worker
-    class Supervisor supervisor
+    class Supervisor,Demand supervisor
     class Service,TUI service
     class ClientA,ClientB,StatusClient client
 ```
 
 ### Data-flow guarantees
 
-- Every frame path is bounded: the capture slot, IPC PUSH/PULL and PUB socket
+- Every frame path is bounded: the capture slot, IPC PUSH/PULL and XPUB socket
   use capacity-one behavior, so old frames are dropped instead of queued.
 - Camera workers use the `spawn` multiprocessing start method. A worker owns
   its camera SDK and reports `hello`, state transitions and heartbeat metrics
   through the internal ROUTER/DEALER control channel.
-- `stream_pub` is a one-to-many ZeroMQ PUB endpoint. Clients subscribe to
-  camera topics without competing for the stream. `status_rep` is a separate
-  endpoint defined in `config.yaml`.
+- `stream_pub` is externally a standard one-to-many ZeroMQ PUB/SUB endpoint.
+  Internally it is XPUB solely to observe subscription events for idle policy;
+  clients use ordinary SUB sockets and do not compete for frames. `status_rep`
+  is a separate endpoint defined in `config.yaml`.
 - The dashboard's `cost` values are processing costs: camera read, Supervisor
   PULL-to-PUB preparation and local PUB enqueue. Client receive/decode latency
   and actual client-side drops are not observable from PUB/SUB alone.
@@ -201,16 +252,16 @@ flowchart LR
         subgraph Cameras["Camera nodes (one panel per configured camera)"]
             direction TB
             Cam1["front_camera [ONLINE]<br/>opencv 1920x1080 @30<br/>capture 30 fps<br/>to pub 4 ms<br/>ipc 0.62 ms<br/>drops slot 2 ipc 0<br/>subtitle: cost 3 ms"]
-            Cam2["side_camera [OFFLINE]<br/>realsense 1280x720 @30<br/>capture 0 fps<br/>to pub -<br/>ipc -<br/>drops slot 0 ipc 0<br/>error: device disconnected<br/>subtitle: cost -"]
+            Cam2["side_camera [SLEEPING]<br/>realsense 1280x720 @30<br/>capture 0 fps<br/>to pub -<br/>ipc -<br/>drops slot 0 ipc 0<br/>no subscribed stream topic<br/>subtitle: cost -"]
         end
 
         Ipc["IPC<br/>>>>>>>><br/>PUSH / PULL"]
 
         Supervisor["SUPERVISOR<br/>frame PULL, HWM 1<br/>control ROUTER<br/>workers N<br/>subtitle: cost N ms"]
 
-        Zmq["ZeroMQ<br/>>>>>>>><br/>PUB / REP"]
+        Zmq["ZeroMQ<br/>>>>>>>><br/>XPUB / REP"]
 
-        Service["SERVICE<br/>PUB tcp://host:5555<br/>REP tcp://host:5556<br/>rate N Mbps<br/>egress N Mbps<br/>clients N<br/>subtitle: cost N ms"]
+        Service["SERVICE<br/>XPUB tcp://host:5555<br/>REP tcp://host:5556<br/>rate N Mbps<br/>egress N Mbps<br/>clients N<br/>subtitle: cost N ms"]
 
         Pub["PUB<br/>>>>>>>><br/>SUB"]
 
@@ -238,11 +289,14 @@ flowchart LR
 ### Panel fields
 
 - **Camera**: state, driver/profile, capture FPS, end-to-end capture-to-PUB
-  latency, IPC encode/send cost and drop counters. Its subtitle is the
-  measured `driver.read()` cost.
+  latency, IPC encode/send cost and drop counters. With idle policy enabled,
+  `IDLE_PENDING`, `SLEEPING`, and `WAKING` show demand-driven lifecycle state.
+  Its subtitle is the measured `driver.read()` cost.
 - **SUPERVISOR**: IPC PULL and control ROUTER roles plus worker count. Its
+  `active/total` worker count reveals cameras currently kept awake. Its
   subtitle is time from complete IPC receipt to beginning PUB forwarding.
-- **SERVICE**: the configured PUB and REP endpoints, current publish rate,
+- **SERVICE**: the configured XPUB (PUB/SUB-compatible) and REP endpoints,
+  current publish rate,
   estimated egress (`rate × connected clients`) and client count. Its subtitle
   is the local PUB enqueue cost.
 - **Client**: remote IP and TCP port, available codecs, estimated receive rate
@@ -300,10 +354,14 @@ For a `jpeg` frame, decode the third part with
 to `(height, width, 3)` with `np.uint8`.
 
 `status_rep` accepts `{"op":"get_status"}` and returns the supervisor's
-current status snapshot. State changes are also published on the stream socket
-under `status/<camera-name>`. A camera remains `STARTING` until its worker has
-actually captured a first frame, then changes to `ONLINE`; this transition and
-the first capture timestamp do not depend on any stream subscriber.
+current status snapshot. Each camera includes `demand_subscriptions` (matching
+SUB subscription count, not connected-client count) and `idle_after_s`; the
+service includes `active_worker_count` and its effective `idle_policy`. State
+changes are also published on the stream socket under
+`status/<camera-name>`. When idle policy is disabled, a camera remains
+`STARTING` until its worker captures a first frame, then changes to `ONLINE`
+without any stream subscriber. When it is enabled, only a matching stream
+subscription keeps that camera awake or wakes it from `SLEEPING`.
 
 The service is intentionally live-only: no recording, replay, frame grouping,
 or image transformation is performed. Every internal data stage has capacity
