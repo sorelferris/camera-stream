@@ -170,7 +170,7 @@ class VideoWall:
     def _draw_focus(self, canvas: np.ndarray, view: dict[str, Any]) -> list[TileHit]:
         """Render one selected tile over the full available window."""
         height, width = canvas.shape[:2]
-        self._draw_tile(canvas, view, 0, 0, width, height)
+        self._draw_tile(canvas, view, 0, 0, width, height, fill=True)
         return [TileHit(view["name"], (0, 0, width, height))]
 
     def _draw_tile(
@@ -181,11 +181,16 @@ class VideoWall:
         y: int,
         width: int,
         height: int,
+        *,
+        fill: bool = False,
     ) -> None:
         canvas[y : y + height, x : x + width] = (16, 20, 24)
         image = view["image"]
         if image is not None:
-            fitted, offset_x, offset_y = self._letterbox(image, width, height)
+            if fill:
+                fitted, offset_x, offset_y = self._cover(image, width, height)
+            else:
+                fitted, offset_x, offset_y = self._letterbox(image, width, height)
             target = canvas[
                 y + offset_y : y + offset_y + fitted.shape[0],
                 x + offset_x : x + offset_x + fitted.shape[1],
@@ -405,6 +410,21 @@ class VideoWall:
             image, (target_width, target_height), interpolation=cv2.INTER_AREA
         )
         return resized, (width - target_width) // 2, (height - target_height) // 2
+
+    @staticmethod
+    def _cover(
+        image: np.ndarray, width: int, height: int
+    ) -> tuple[np.ndarray, int, int]:
+        """Scale an image to cover a tile, cropping the centered overflow."""
+        scale = max(width / image.shape[1], height / image.shape[0])
+        target_width = max(width, round(image.shape[1] * scale))
+        target_height = max(height, round(image.shape[0] * scale))
+        resized = cv2.resize(
+            image, (target_width, target_height), interpolation=cv2.INTER_AREA
+        )
+        left = max(0, (target_width - width) // 2)
+        top = max(0, (target_height - height) // 2)
+        return resized[top : top + height, left : left + width], 0, 0
 
     @staticmethod
     def _overlay(

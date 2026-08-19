@@ -15,10 +15,21 @@ available; terminal-only and headless operation are not supported.
 
 ## Run
 
-Run directly from the repository root without installing the project:
+For local development from the repository root, use the workspace command. It
+uses the current source tree, so code changes are reflected on every run:
 
 ```bash
-uvx --from ./example/camera-stream-client camera-stream-client \
+uv run --package camera-stream-client camera-stream-client \
+  --endpoint tcp://192.168.5.24:5555 \
+  --status-endpoint tcp://192.168.5.24:5556
+```
+
+To verify the isolated `uvx` distribution from a checkout, force a fresh local
+build. `uvx --from` caches packages with the same version and may otherwise
+run a previously built `camera-stream-client==0.1.0`:
+
+```bash
+uvx --no-cache --from ./example/camera-stream-client camera-stream-client \
   --endpoint tcp://192.168.5.24:5555 \
   --status-endpoint tcp://192.168.5.24:5556
 ```
@@ -33,7 +44,7 @@ the ZeroMQ SUB subscription layer, so image data for other cameras is not
 downloaded:
 
 ```bash
-uvx --from ./example/camera-stream-client camera-stream-client \
+uv run --package camera-stream-client camera-stream-client \
   --endpoint tcp://192.168.5.24:5555 \
   --status-endpoint tcp://192.168.5.24:5556 \
   --camera base_camera \
@@ -75,9 +86,11 @@ server.
 | `E` | Export endpoints, the status snapshot, and metrics as `camera-stream-client-YYYYMMDD-HHMMSS.json` in the current directory. Image payloads are not exported. |
 | `Q` / `Esc` | Exit. |
 
-The video wall adapts its grid to the window size and camera count. Each tile
-preserves the source aspect ratio and uses letterboxing rather than stretching
-the image.
+The video wall adapts its grid to the window size and camera count. Grid tiles
+preserve the source aspect ratio and use letterboxing rather than stretching
+the image. A focused tile fills the entire window using an aspect-ratio-
+preserving cover scale; excess image area is cropped from the center so that
+the focused view does not leave side bars.
 
 ## Status Bar And Tile States
 
