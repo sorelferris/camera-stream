@@ -1,18 +1,27 @@
 # camera-stream
 
 > [!TIP]
-> **camera-stream** is a Linux service that turns multiple local color cameras
-> into a live ZeroMQ broadcast. It is designed for low-latency internal-network
-> deployments where a current frame matters more than preserving every frame.
+> ## camera-stream | Project Card
 >
-> | Capability | Design |
+> **camera-stream** is a lightweight Linux multi-camera streaming service. It
+> broadcasts local camera images over ZeroMQ for trusted internal networks,
+> designed for real-time-first machine-vision and robotics workloads where the
+> newest frame is more valuable than retaining every frame.
+>
+> | Core capability | Design |
 > | --- | --- |
-> | Camera drivers | OpenCV/V4L2, Intel RealSense, and Orbbec |
-> | Image transport | One-to-many ZeroMQ PUB/SUB, with per-camera topics |
-> | Real-time policy | Latest-frame-wins: bounded capacity-one stages drop stale frames rather than queue them |
-> | Payload | Per-camera JPEG or `raw_bgr8`, explicitly configured quality/format |
-> | On-demand capture | Per-camera idle sleep/wake driven by stream topic subscriptions |
-> | Observability | Separate REP status API, stream status events, and an optional Rich server dashboard |
+> | Device support | V4L2/OpenCV cameras, Intel RealSense, and Orbbec cameras |
+> | Low-latency broadcast | One-to-many ZeroMQ PUB/SUB with independently subscribable camera topics |
+> | Real-time policy | Capacity-one, latest-frame-wins stages discard stale frames instead of accumulating latency |
+> | Image format | Per-camera JPEG for lower bandwidth, or lossless `raw_bgr8` output |
+> | On-demand operation | Topic-demand idle sleep/wake stops unused camera capture and encoding |
+> | Operations | REP status API, stream status events, and an optional Rich monitoring dashboard |
+>
+> **Best suited to:** real-time robotic perception, multi-camera intranet
+> distribution, and shared image sources for multiple algorithm nodes. It is a
+> live-streaming service, not a recording or replay system.
+
+Chinese documentation: [README.zh.md](README.zh.md)
 
 Linux service for publishing multiple local cameras over ZeroMQ with a
 latest-frame-wins policy.
