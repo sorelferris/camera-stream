@@ -249,7 +249,7 @@ class VideoWall:
                 [
                     ("RX", self._fps(metrics["instant_fps"])),
                     ("AVG", self._fps(metrics["average_fps"])),
-                    ("1% LOW", self._fps(metrics["one_percent_low_fps"])),
+                    ("1%", self._fps(metrics["one_percent_low_fps"])),
                 ],
                 [
                     ("INTERVAL", self._ms(metrics["frame_interval_ms"])),
@@ -318,7 +318,7 @@ class VideoWall:
             [
                 ("RX", self._fps(metrics["instant_fps"])),
                 ("AVG", self._fps(metrics["average_fps"])),
-                ("1% LOW", self._fps(metrics["one_percent_low_fps"])),
+                ("1%", self._fps(metrics["one_percent_low_fps"])),
                 ("RATE", f"{metrics['bitrate_mbps']:.1f} Mbps"),
             ],
             x + 8,
