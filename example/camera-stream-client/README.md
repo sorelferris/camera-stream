@@ -59,6 +59,65 @@ The first run downloads packages and creates an isolated environment; the
 OpenCV wheel is the largest download. Later runs reuse the `uv` or `pipx`
 cache.
 
+## Use From Python
+
+The package also exposes a small, thread-safe latest-frame-wins interface for
+applications. It owns the ZeroMQ receiver thread, decodes `jpeg` and
+`raw_bgr8`, applies server status events, and keeps at most one unread frame
+per camera. A slow loop therefore receives the newest image rather than a
+backlog.
+
+Add it as an application dependency:
+
+```bash
+uv add camera-stream-client
+# or: pip install camera-stream-client
+```
+
+```python
+from camera_stream_client import StreamClient
+
+with StreamClient("tcp://192.168.5.24:5555") as client:
+    camera = client.subscribe("base_camera/color")
+    camera.wait_for_state("ONLINE", timeout=5)
+
+    while True:
+        frame = camera.read(timeout=1)
+        image = frame.image        # NumPy BGR image for OpenCV
+        print(frame.sequence, f"age={frame.age_ms:.1f} ms")
+```
+
+`subscribe()` returns the same `CameraStream` object for repeated requests for
+the same topic. Valid topics use the `<camera>/color` form. `read(timeout=)`
+waits for and consumes the newest available frame, while `latest()` (also
+available as `read_latest()`) returns immediately with a frame or `None`.
+`TimeoutError` indicates no new frame arrived before the timeout.
+
+| Member | Use |
+|---|---|
+| `camera.name`, `camera.topic` | Configured camera name and full stream topic. |
+| `camera.read(timeout=None)` | Wait for and consume the latest frame. |
+| `camera.latest()` | Consume a frame only when one is already available. |
+| `camera.last_frame` | Inspect the currently unread frame without consuming it. |
+| `camera.state`, `camera.error`, `camera.status` | Latest server lifecycle state, error, and full per-camera status record. |
+| `camera.wait_for_state(state, timeout=None)` | Wait for a server state and return `False` when it times out. |
+| `camera.metrics` | Local received, overwritten, sequence-gap, and invalid-frame counts; loss rates; last receive time; and rolling average FPS. |
+| `camera.unsubscribe()` / `camera.close()` | Stop one camera subscription. Further reads raise `RuntimeError`. |
+| `client.unsubscribe(topic)` | Stop a subscription by topic. |
+| `client.close()` | Stop all subscriptions and the receiver thread; context-manager use is preferred. |
+
+Each returned `Frame` contains `image` (a decoded NumPy BGR array), a copied
+wire `header`, local receive timestamps, `sequence`, `captured_utc_ns`, and
+`age_ms`. `age_ms` is end-to-end frame age and requires NTP/PTP clock
+synchronization between the server and client to be meaningful.
+
+`metrics["local_dropped_frames"]` counts frames replaced in the unread
+one-frame slot because the application did not call `read()` fast enough.
+`metrics["sequence_gap_frames"]` counts absent source sequence numbers; those
+can originate at capture, server IPC/PUB stages, or the network. `drop_rate`
+is their combined rate over observed source frames, while `local_drop_rate`
+and `gap_drop_rate` keep the two causes separate.
+
 ## Release
 
 Build and validate a release, then perform a PyPI dry run:

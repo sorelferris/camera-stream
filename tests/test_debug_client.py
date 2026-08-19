@@ -12,6 +12,7 @@ CLIENT_SOURCE = Path(__file__).parents[1] / "example" / "camera-stream-client" /
 sys.path.insert(0, str(CLIENT_SOURCE))
 
 from camera_stream_client.cli import parse_args
+from camera_stream_client.client import CameraStream
 from camera_stream_client.dashboard import VideoWall
 from camera_stream_client.protocol import (
     FrameMessage,
@@ -22,6 +23,16 @@ from camera_stream_client.protocol import (
 )
 from camera_stream_client.state import CameraRegistry
 from camera_stream_client.transport import StatusStore, StreamReceiver, client_endpoint
+
+
+class _ClientStub:
+    error: str | None = None
+
+    def __init__(self) -> None:
+        self.unsubscribed: list[str] = []
+
+    def unsubscribe(self, topic: str) -> None:
+        self.unsubscribed.append(topic)
 
 
 def _header(*, camera: str = "front", sequence: int = 1) -> bytes:
@@ -224,3 +235,37 @@ def test_discovery_subscribes_to_color_topics_without_using_empty_prefix() -> No
     )
 
     assert socket.subscriptions == [b"front/color", b"side/color"]
+
+
+def test_public_camera_stream_keeps_only_the_newest_frame() -> None:
+    client = _ClientStub()
+    camera = CameraStream(client, "front/color")  # type: ignore[arg-type]
+    first = parse_message([b"front/color", _header(sequence=1), b"\x01\x02\x03"])
+    third = parse_message([b"front/color", _header(sequence=3), b"\x04\x05\x06"])
+    assert isinstance(first, FrameMessage)
+    assert isinstance(third, FrameMessage)
+
+    camera._receive(first)
+    camera._receive(third)
+    frame = camera.read(timeout=0)
+
+    assert frame.sequence == 3
+    assert frame.image.tolist() == [[[4, 5, 6]]]
+    assert camera.latest() is None
+    assert camera.metrics["dropped_frames"] == 2
+    assert camera.metrics["local_dropped_frames"] == 1
+    assert camera.metrics["sequence_gap_frames"] == 1
+    assert camera.metrics["drop_rate"] == pytest.approx(2 / 3)
+
+
+def test_public_camera_stream_status_wait_and_close() -> None:
+    client = _ClientStub()
+    camera = CameraStream(client, "front/color")  # type: ignore[arg-type]
+
+    assert not camera.wait_for_state("ONLINE", timeout=0)
+    camera._apply_event(StatusEvent("front", "ONLINE", None))
+    assert camera.wait_for_state("ONLINE", timeout=0)
+    assert camera.state == "ONLINE"
+    camera.unsubscribe()
+
+    assert client.unsubscribed == ["front/color"]

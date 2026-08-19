@@ -1,23 +1,8 @@
-import json
+from camera_stream_client import StreamClient
 
-import zmq
-
-context = zmq.Context()
-stream = context.socket(zmq.SUB)
-stream.setsockopt(zmq.RCVHWM, 1)
-stream.setsockopt(zmq.LINGER, 0)
-stream.setsockopt(zmq.SUBSCRIBE, b"status/")
-stream.connect("tcp://192.168.5.24:5555")
-
-try:
+with StreamClient("tcp://192.168.5.24:5555") as client:
+    camera = client.subscribe("base_camera/color")
     while True:
-        topic, payload = stream.recv_multipart()
-        message = json.loads(payload.decode("utf-8"))
-        if topic == b"status/snapshot" and message.get("type") == "snapshot":
-            for camera in message["cameras"]:
-                print(camera["name"], camera["state"])
-        elif topic.startswith(b"status/camera/"):
-            print(topic.decode(), message["state"], message.get("error"))
-finally:
-    stream.close()
-    context.term()
+        frame = camera.read(timeout=1)
+        image = frame.image
+        print(f"Received frame from {camera.name} with shape {image.shape}")

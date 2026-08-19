@@ -82,6 +82,27 @@ uvx camera-stream-server topic bw base_camera/color --endpoint tcp://192.168.5.2
 `config.yaml` 中的端点是服务端绑定地址。远端客户端必须将 `0.0.0.0` 替换为服务端可达
 IP。使用随附配置时，图像和状态均使用 `tcp://192.168.5.24:5555`。
 
+### 使用客户端包
+
+应用若需要已解码图像，又不希望自行管理 ZeroMQ socket，可使用
+`camera-stream-client` 提供的最新帧优先接口：
+
+```python
+from camera_stream_client import StreamClient
+
+with StreamClient("tcp://192.168.5.24:5555") as client:
+    camera = client.subscribe("base_camera/color")
+    camera.wait_for_state("ONLINE", timeout=5)
+    while True:
+        frame = camera.read(timeout=1)
+        image = frame.image  # NumPy BGR 图像
+        print(frame.sequence, frame.age_ms, camera.metrics["average_fps"])
+```
+
+`read()` 返回最新可用帧，并丢弃未读取的旧帧。`latest()` 立即返回；`state`、`error`、
+`status`、`metrics` 和 `wait_for_state()` 则提供服务端状态和本地接收诊断。完整接口见
+[客户端包 README](example/camera-stream-client/README.md#use-from-python)。
+
 ### 发现相机 topic 与状态
 
 状态与图像复用同一个 `stream_pub` 端点。`status/` 订阅生效后会立即收到完整快照，随后可

@@ -91,6 +91,29 @@ The endpoints in `config.yaml` are server bind addresses. A remote client must
 replace `0.0.0.0` with the server's reachable IP address. With the bundled
 configuration, use `tcp://192.168.5.24:5555` for frames and status.
 
+### Use the client package
+
+For applications that need decoded frames without managing ZeroMQ sockets,
+use the `camera-stream-client` package's latest-frame-wins interface:
+
+```python
+from camera_stream_client import StreamClient
+
+with StreamClient("tcp://192.168.5.24:5555") as client:
+    camera = client.subscribe("base_camera/color")
+    camera.wait_for_state("ONLINE", timeout=5)
+    while True:
+        frame = camera.read(timeout=1)
+        image = frame.image  # NumPy BGR image
+        print(frame.sequence, frame.age_ms, camera.metrics["average_fps"])
+```
+
+`read()` returns the newest available frame and discards older unread frames.
+`latest()` returns immediately, while `state`, `error`, `status`, `metrics`,
+and `wait_for_state()` expose server and local receive diagnostics. See the
+[client package README](example/camera-stream-client/README.md#use-from-python)
+for the complete interface.
+
 ### Discover camera topics and status
 
 Status and frames use the same `stream_pub` endpoint. Subscribe to `status/`

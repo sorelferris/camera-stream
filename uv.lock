@@ -41,7 +41,7 @@ wheels = [
 
 [[package]]
 name = "camera-stream-client"
-version = "0.1.7"
+version = "0.1.8"
 source = { editable = "example/camera-stream-client" }
 dependencies = [
     { name = "numpy" },
