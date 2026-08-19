@@ -180,10 +180,11 @@ continuous capture and the lowest first-frame latency.
 ### Subscribe to camera status
 
 Status and frames use the same `stream_pub` endpoint. Subscribe to `status/`
-to receive immediate per-camera state events and a full snapshot every second.
-Both are best-effort PUB/SUB messages: a late or slow subscriber may miss a
-message, but the next snapshot lets it converge again. A `status/` subscription
-does not count as camera demand and therefore does not wake capture.
+to receive an immediate full snapshot when the subscription becomes active,
+immediate per-camera state events, and a full snapshot every second. Both are
+best-effort PUB/SUB messages: a late or slow subscriber may miss a message,
+but the next snapshot lets it converge again. A `status/` subscription does not
+count as camera demand and therefore does not wake capture.
 
 ```python
 import json
@@ -326,8 +327,9 @@ flowchart LR
   Internally it is XPUB solely to observe subscription events for idle policy;
   clients use ordinary SUB sockets and do not compete for frames. It publishes
   `status/camera/<camera-name>` state events immediately and a full
-  `status/snapshot` every second. Those status messages are best-effort, like
-  frames; a status-only subscription never creates camera demand.
+  `status/snapshot` every second and on a new snapshot subscription. Those
+  status messages are best-effort, like frames; a status-only subscription
+  never creates camera demand.
 - The dashboard's `cost` values are processing costs: camera read, Supervisor
   PULL-to-PUB preparation and local PUB enqueue. Client receive/decode latency
   and actual client-side drops are not observable from PUB/SUB alone.
@@ -447,8 +449,9 @@ For a `jpeg` frame, decode the third part with
 `raw_bgr8`, first verify `payload_size == width * height * 3`, then reshape it
 to `(height, width, 3)` with `np.uint8`.
 
-The stream endpoint publishes a complete status snapshot every second on
-`status/snapshot`, and sends each camera state change immediately on
+The stream endpoint publishes a complete status snapshot every second, and
+also when a `status/snapshot` subscription becomes active, on `status/snapshot`.
+It sends each camera state change immediately on
 `status/camera/<camera-name>`. Each snapshot includes `demand_subscriptions`
 (matching `<camera>/color` subscriptions, not connected-client count) and
 `idle_after_s`; the service includes `active_worker_count` and its effective

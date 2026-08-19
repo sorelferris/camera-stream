@@ -13,6 +13,7 @@ stream.connect("tcp://192.168.5.24:5555")
 try:
     while True:
         topic, header_bytes, payload = stream.recv_multipart()
+        print(topic.decode("utf-8"))
         header = json.loads(header_bytes.decode("utf-8"))
         print(header)
         # Decode JPEG with cv2.imdecode(...) when header["codec"] == "jpeg".

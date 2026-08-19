@@ -161,10 +161,10 @@ idle_policy:
 
 ### 订阅相机状态
 
-状态与图像复用同一个 `stream_pub` 端点。订阅 `status/` 可收到即时的单相机状态事件
-以及每秒一次的完整快照。两者均为尽力而为的 PUB/SUB 消息：晚连接或慢速订阅者可能
-错过消息，但下一次快照会重新收敛状态。仅订阅 `status/` 不计入相机需求，因而不会唤醒
-采集。
+状态与图像复用同一个 `stream_pub` 端点。`status/` 订阅生效后会立即收到完整快照，随后可
+收到即时的单相机状态事件及每秒一次的完整快照。两者均为尽力而为的 PUB/SUB 消息：晚连接
+或慢速订阅者可能错过消息，但下一次快照会重新收敛状态。仅订阅 `status/` 不计入相机需求，
+因而不会唤醒采集。
 
 ```python
 import json
@@ -292,8 +292,8 @@ flowchart LR
   ROUTER/DEALER 控制通道上报 `hello`、状态变更和心跳指标。
 - `stream_pub` 是唯一的对外一对多 ZeroMQ PUB/SUB 端点。内部的 XPUB 仅用于观察空闲
   策略所需的订阅事件；客户端使用普通 SUB socket，彼此不会竞争帧。它立即发布
-  `status/camera/<camera-name>` 状态事件，并每秒发布完整的 `status/snapshot`。状态消息与
-  帧一样为尽力而为；仅订阅状态不会产生相机需求。
+  `status/camera/<camera-name>` 状态事件，并每秒及新的快照订阅生效时发布完整的
+  `status/snapshot`。状态消息与帧一样为尽力而为；仅订阅状态不会产生相机需求。
 - 仪表盘的 `cost` 均为处理耗时：相机读取、Supervisor 从 PULL 收到帧到准备 PUB 转发、
   以及本地 PUB 入队。仅靠 PUB/SUB 无法观测客户端接收/解码延迟或实际客户端丢帧。
 
@@ -390,7 +390,7 @@ flowchart LR
 第三段。对 `raw_bgr8`，先验证 `payload_size == width * height * 3`，再用
 `np.uint8` reshape 为 `(height, width, 3)`。
 
-推流端点每秒在 `status/snapshot` 发布完整状态快照，并在状态改变时立即在
+推流端点每秒以及新的 `status/snapshot` 订阅生效时发布完整状态快照，并在状态改变时立即在
 `status/camera/<camera-name>` 发布事件。每个快照包含 `demand_subscriptions`（匹配的
 `<camera>/color` 订阅数，而非已连接客户端数）和 `idle_after_s`；服务状态包含
 `active_worker_count` 与生效的 `idle_policy`。后续快照可以修复错过的状态事件，但 PUB/SUB

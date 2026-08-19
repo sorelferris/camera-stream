@@ -144,7 +144,6 @@ def test_status_snapshot_is_published_to_standard_subscribers() -> None:
     try:
         assert supervisor.stream_pub.poll(1000) == zmq.POLLIN
         supervisor._handle_stream_subscriptions()
-        supervisor._publish_status_snapshot()
         assert subscriber.poll(1000) == zmq.POLLIN
         topic, payload = subscriber.recv_multipart()
         snapshot = json.loads(payload.decode("utf-8"))

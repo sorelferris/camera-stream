@@ -1,10 +1,12 @@
 import sys
+import threading
 import time
 from pathlib import Path
 
 import cv2
 import numpy as np
 import pytest
+import zmq
 
 CLIENT_SOURCE = Path(__file__).parents[1] / "example" / "camera-stream-client" / "src"
 sys.path.insert(0, str(CLIENT_SOURCE))
@@ -19,7 +21,7 @@ from camera_stream_client.protocol import (
     parse_message,
 )
 from camera_stream_client.state import CameraRegistry
-from camera_stream_client.transport import client_endpoint
+from camera_stream_client.transport import StatusStore, StreamReceiver, client_endpoint
 
 
 def _header(*, camera: str = "front", sequence: int = 1) -> bytes:
@@ -188,3 +190,37 @@ def test_server_state_label_explains_missing_status_source() -> None:
         )
         == "srv:ONLINE"
     )
+
+
+def test_immediate_status_event_overrides_an_older_status_snapshot() -> None:
+    registry = CameraRegistry({"front"})
+    registry.apply_status_snapshot(
+        {"cameras": [{"name": "front", "state": "STARTING"}]}
+    )
+    registry.apply_stream_status(StatusEvent("front", "ONLINE", None))
+
+    view = registry.views(time.monotonic_ns(), time.time_ns())[0]
+    assert VideoWall("tcp://stream")._server_state_label(view) == "srv:ONLINE"
+
+
+def test_discovery_subscribes_to_color_topics_without_using_empty_prefix() -> None:
+    class SubscriptionSocket:
+        def __init__(self) -> None:
+            self.subscriptions: list[bytes] = []
+
+        def setsockopt(self, option: int, value: bytes) -> None:
+            assert option == zmq.SUBSCRIBE
+            self.subscriptions.append(value)
+
+    registry = CameraRegistry(set())
+    receiver = StreamReceiver(
+        "tcp://stream", set(), registry, StatusStore(), threading.Event()
+    )
+    socket = SubscriptionSocket()
+
+    receiver._subscribe_discovered_cameras(
+        socket,  # type: ignore[arg-type]
+        {"cameras": [{"name": "front"}, {"name": "side"}, {"name": "front"}]},
+    )
+
+    assert socket.subscriptions == [b"front/color", b"side/color"]

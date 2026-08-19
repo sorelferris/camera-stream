@@ -217,17 +217,22 @@ class Supervisor:
     def _handle_stream_subscriptions(self) -> None:
         """Apply standard SUB topic changes emitted by the XPUB socket."""
         changed_names: set[str] = set()
+        snapshot_requested = False
         while True:
             try:
                 event = self.stream_pub.recv(flags=zmq.DONTWAIT)
             except zmq.Again:
                 break
+            if event[:1] == b"\x01" and b"status/snapshot".startswith(event[1:]):
+                snapshot_requested = True
             changed_names.update(self.topic_demand.apply(event))
         for name in changed_names:
             record = self.records[name]
             record.demand_subscriptions = self.topic_demand.count(name)
             record.status["demand_subscriptions"] = record.demand_subscriptions
             self._reconcile_camera_idle(record, time.monotonic_ns())
+        if snapshot_requested:
+            self._publish_status_snapshot(force=True)
 
     def _reconcile_idle_policy(self) -> None:
         if not self.config.idle_policy.enabled:
@@ -485,10 +490,13 @@ class Supervisor:
             return
         self.publish_bitrate_buckets.append((bucket_start_ns, size))
 
-    def _publish_status_snapshot(self) -> None:
+    def _publish_status_snapshot(self, *, force: bool = False) -> None:
         """Broadcast the full state periodically so late SUB clients converge."""
         now_ns = time.monotonic_ns()
-        if now_ns - self.last_status_snapshot_ns < STATUS_SNAPSHOT_INTERVAL_NS:
+        if (
+            not force
+            and now_ns - self.last_status_snapshot_ns < STATUS_SNAPSHOT_INTERVAL_NS
+        ):
             return
         snapshot = self._status_snapshot()
         snapshot["type"] = "snapshot"

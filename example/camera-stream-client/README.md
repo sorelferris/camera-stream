@@ -88,7 +88,11 @@ use `--allow-dirty` only for deliberate local builds.
 
 The client always subscribes to `status/` on this endpoint. It receives
 immediate per-camera state events plus a complete server snapshot every second,
-without a second socket or a polling request/reply round trip.
+and receives a server-pushed initial snapshot as soon as that subscription
+becomes active.
+It uses separate local image and status SUB sockets in one receiver thread so
+image traffic cannot delay status, but both connect to the same public endpoint
+and no polling request/reply channel exists.
 
 ## Controls
 

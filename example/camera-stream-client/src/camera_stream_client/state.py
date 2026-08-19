@@ -89,6 +89,9 @@ class CameraState:
         with self._lock:
             self._stream_state = event.state
             self._stream_error = event.error
+            # State events are sent immediately; do not wait for the next
+            # periodic snapshot before updating the HUD's authoritative view.
+            self._server.update({"state": event.state, "last_error": event.error})
 
     def record_invalid(self, reason: str) -> None:
         self.metrics.record_invalid(reason)

@@ -69,35 +69,42 @@ class StreamReceiver(threading.Thread):
         self.status_store = status_store
         self.stop = stop
         self.error: str | None = None
+        self._image_subscriptions = set(cameras)
 
     def run(self) -> None:
         context = zmq.Context()
-        socket = context.socket(zmq.SUB)
-        socket.setsockopt(zmq.RCVHWM, 1)
-        socket.setsockopt(zmq.LINGER, 0)
-        socket.setsockopt(zmq.SUBSCRIBE, b"status/")
-        if self.cameras:
-            for camera in sorted(self.cameras):
-                socket.setsockopt(zmq.SUBSCRIBE, f"{camera}/color".encode())
-        else:
-            socket.setsockopt(zmq.SUBSCRIBE, b"")
-        socket.connect(self.endpoint)
+        status_socket = context.socket(zmq.SUB)
+        status_socket.setsockopt(zmq.RCVHWM, 1)
+        status_socket.setsockopt(zmq.LINGER, 0)
+        status_socket.setsockopt(zmq.SUBSCRIBE, b"status/")
+        image_socket = context.socket(zmq.SUB)
+        image_socket.setsockopt(zmq.RCVHWM, 1)
+        image_socket.setsockopt(zmq.LINGER, 0)
+        for camera in sorted(self._image_subscriptions):
+            image_socket.setsockopt(zmq.SUBSCRIBE, f"{camera}/color".encode())
+        status_socket.connect(self.endpoint)
+        image_socket.connect(self.endpoint)
         poller = zmq.Poller()
-        poller.register(socket, zmq.POLLIN)
+        poller.register(status_socket, zmq.POLLIN)
+        poller.register(image_socket, zmq.POLLIN)
         try:
             while not self.stop.is_set():
-                if socket not in dict(poller.poll(100)):
-                    continue
-                self._drain(socket)
+                events = dict(poller.poll(100))
+                if status_socket in events:
+                    self._drain(status_socket, image_socket)
+                if image_socket in events:
+                    self._drain(image_socket, image_socket)
         except zmq.ZMQError as exc:
             if not self.stop.is_set():
                 self.error = str(exc)
         finally:
-            poller.unregister(socket)
-            socket.close(0)
+            poller.unregister(status_socket)
+            poller.unregister(image_socket)
+            status_socket.close(0)
+            image_socket.close(0)
             context.term()
 
-    def _drain(self, socket: zmq.Socket) -> None:
+    def _drain(self, socket: zmq.Socket, image_socket: zmq.Socket) -> None:
         while not self.stop.is_set():
             try:
                 parts = socket.recv_multipart(flags=zmq.DONTWAIT)
@@ -114,5 +121,26 @@ class StreamReceiver(threading.Thread):
             if isinstance(message, StatusSnapshot):
                 self.status_store.success(message.snapshot)
                 self.registry.apply_status_snapshot(message.snapshot)
+                self._subscribe_discovered_cameras(image_socket, message.snapshot)
                 continue
             self.registry.receive(message, time.monotonic_ns(), time.time_ns())
+
+    def _subscribe_discovered_cameras(
+        self, image_socket: zmq.Socket, snapshot: dict[str, Any]
+    ) -> None:
+        """Subscribe to configured cameras after the status socket discovers them."""
+        if self.cameras:
+            return
+        cameras = snapshot.get("cameras")
+        if not isinstance(cameras, list):
+            return
+        for status in cameras:
+            name = status.get("name") if isinstance(status, dict) else None
+            if (
+                not isinstance(name, str)
+                or not name
+                or name in self._image_subscriptions
+            ):
+                continue
+            image_socket.setsockopt(zmq.SUBSCRIBE, f"{name}/color".encode())
+            self._image_subscriptions.add(name)
