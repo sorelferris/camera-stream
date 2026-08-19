@@ -139,6 +139,29 @@ scripts/publish_camera_stream_server.sh --publish
 Use `--testpypi --publish` with a TestPyPI token before the production upload.
 The script rejects a dirty worktree unless `--allow-dirty` is explicitly set.
 
+## Topic Diagnostics
+
+`camera-stream-server topic` is a read-only PUB/SUB inspection CLI for a
+running deployment. Every command uses the public stream endpoint, replacing
+`0.0.0.0` with the server's reachable address for remote use:
+
+```bash
+camera-stream-server topic list --endpoint tcp://192.168.5.24:5555
+camera-stream-server topic list --endpoint tcp://192.168.5.24:5555 --verbose
+camera-stream-server topic info base_camera/color --endpoint tcp://192.168.5.24:5555
+camera-stream-server topic echo base_camera/color --endpoint tcp://192.168.5.24:5555 --count 1
+camera-stream-server topic hz base_camera/color --endpoint tcp://192.168.5.24:5555
+camera-stream-server topic bw base_camera/color --endpoint tcp://192.168.5.24:5555
+```
+
+`list` reads the status directory and lists all configured `<camera>/color`
+topics without waking cameras. `info` prints the latest status and a real frame
+header, while `echo`, `hz`, and `bw` subscribe to the selected image topic and
+therefore wake that camera under idle policy. `hz` reports received-frame rate;
+`bw` reports encoded image payload Mbps. `echo`, `hz`, and `bw` run until
+interrupted; pass `--count N` for a bounded diagnostic run. `hz` and `bw` also
+accept `--window SECONDS`.
+
 ## Client Quick Start
 
 The endpoints in `config.yaml` are server bind addresses. A remote client must

@@ -127,6 +127,25 @@ scripts/publish_camera_stream_server.sh --publish
 正式发布前可用 TestPyPI token 执行 `--testpypi --publish`。除非显式传入
 `--allow-dirty`，脚本会拒绝在脏工作区中发布。
 
+## Topic 诊断命令
+
+`camera-stream-server topic` 是面向运行中服务的只读 PUB/SUB 检查 CLI。所有命令使用
+公共推流端点；远程使用时请将 `0.0.0.0` 替换为服务端实际可达地址：
+
+```bash
+camera-stream-server topic list --endpoint tcp://192.168.5.24:5555
+camera-stream-server topic list --endpoint tcp://192.168.5.24:5555 --verbose
+camera-stream-server topic info base_camera/color --endpoint tcp://192.168.5.24:5555
+camera-stream-server topic echo base_camera/color --endpoint tcp://192.168.5.24:5555 --count 1
+camera-stream-server topic hz base_camera/color --endpoint tcp://192.168.5.24:5555
+camera-stream-server topic bw base_camera/color --endpoint tcp://192.168.5.24:5555
+```
+
+`list` 读取状态目录并列出全部已配置的 `<camera>/color` 主题，不会唤醒相机。`info` 输出
+最近状态与真实帧头；`echo`、`hz` 和 `bw` 订阅选定图像主题，因此在空闲策略下会唤醒对应
+相机。`hz` 统计收到的帧率，`bw` 统计编码图像载荷的 Mbps。`echo`、`hz`、`bw` 默认持续
+运行直到中断；传入 `--count N` 可限制诊断帧数。`hz` 和 `bw` 还支持 `--window SECONDS`。
+
 ## 客户端快速开始
 
 `config.yaml` 中的端点是服务端的绑定地址。远端客户端必须将 `0.0.0.0` 替换为

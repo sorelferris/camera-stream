@@ -8,6 +8,7 @@ from pathlib import Path
 
 from camera_stream.config import load_config
 from camera_stream.supervisor import Supervisor, install_signal_handlers
+from camera_stream.topic import add_topic_subcommands, run_topic_command
 
 TEMPLATE_FILENAME = "config.yaml"
 
@@ -25,6 +26,8 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="write a starter config.yaml into the current directory",
     )
+    subparsers = parser.add_subparsers(dest="command")
+    add_topic_subcommands(subparsers)
     return parser
 
 
@@ -56,6 +59,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser = build_parser()
     args = parser.parse_args(argv)
+    if args.command == "topic":
+        try:
+            return run_topic_command(args)
+        except (TypeError, ValueError) as exc:
+            print(f"topic error: {exc}", file=sys.stderr)
+            return 2
     if args.download_template:
         if args.config is not None or args.tui:
             parser.error(
