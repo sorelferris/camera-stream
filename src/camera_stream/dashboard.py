@@ -159,10 +159,6 @@ class Dashboard:
 
     def _client_node(self, client: dict[str, Any]) -> Panel:
         details = Text()
-        details.append(
-            f"streams {client.get('available_streams', '-')} available\n",
-            style="green",
-        )
         details.append(f"codec   {client.get('codecs', '-')}\n", style="dim")
         details.append(
             f"est rx  {self._megabits(client.get('estimated_bitrate_mbps'))}\n",

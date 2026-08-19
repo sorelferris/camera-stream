@@ -41,6 +41,85 @@ remains headless and suitable for systemd.
 uv run camera-stream --config config.yaml --tui
 ```
 
+## Client Quick Start
+
+The endpoints in `config.yaml` are server bind addresses. A remote client must
+replace `0.0.0.0` with the server's reachable IP address. With the bundled
+configuration, use `tcp://192.168.5.24:5555` for frames and
+`tcp://192.168.5.24:5556` for status.
+
+### Request camera status
+
+The status endpoint uses a strict REQ/REP exchange. Send one request, receive
+one snapshot, then send the next request on the same socket.
+
+```python
+import zmq
+
+context = zmq.Context()
+status = context.socket(zmq.REQ)
+status.setsockopt(zmq.LINGER, 0)
+status.connect("tcp://192.168.5.24:5556")
+
+status.send_json({"op": "get_status"})
+snapshot = status.recv_json()
+
+for camera in snapshot["cameras"]:
+    print(
+        camera["name"],
+        camera["state"],
+        f"capture={camera['capture_fps']} fps",
+        f"drops={camera['dropped_before_encode'] + camera['dropped_ipc']}",
+    )
+
+status.close()
+context.term()
+```
+
+The snapshot includes service uptime, configured endpoints, current bitrate and
+client metadata as well as the per-camera fields shown above. It is a point-in-
+time query; request it again when a later state is needed.
+
+### Subscribe to a camera stream
+
+Each color stream is published under `<camera-name>/color`. The subscriber
+below reads only `base_camera`; its high-water mark of one preserves the
+latest-frame-wins policy on the client as well.
+
+```python
+import json
+
+import zmq
+
+context = zmq.Context()
+stream = context.socket(zmq.SUB)
+stream.setsockopt(zmq.RCVHWM, 1)
+stream.setsockopt(zmq.LINGER, 0)
+stream.setsockopt(zmq.SUBSCRIBE, b"base_camera/color")
+stream.connect("tcp://192.168.5.24:5555")
+
+try:
+    while True:
+        topic, header_bytes, payload = stream.recv_multipart()
+        header = json.loads(header_bytes.decode("utf-8"))
+        print(
+            topic.decode("utf-8"),
+            f"seq={header['sequence']}",
+            f"{header['width']}x{header['height']}",
+            f"codec={header['codec']}",
+            f"payload={len(payload)} bytes",
+        )
+        # Decode JPEG with cv2.imdecode(...) when header["codec"] == "jpeg".
+finally:
+    stream.close()
+    context.term()
+```
+
+To receive every camera topic, subscribe with `b""` instead. That also receives
+two-part `status/<camera-name>` state events, so check the multipart length
+before treating a message as a three-part image frame. See
+[`example/client.py`](example/client.py) for an all-camera OpenCV mosaic client.
+
 ## Architecture
 
 The server is one `camera-stream` process with two logical data-plane stages:
@@ -104,6 +183,69 @@ flowchart LR
   PULL-to-PUB preparation and local PUB enqueue. Client receive/decode latency
   and actual client-side drops are not observable from PUB/SUB alone.
 
+## TUI Dashboard
+
+Run `camera-stream --config config.yaml --tui` to render the following
+in-process topology view. Nodes are vertically centered against their adjacent
+node stacks; each arrow is shown as protocol, direction and transport labels.
+
+```mermaid
+flowchart LR
+    subgraph Screen["CAMERA STREAM                                      uptime HH:MM:SS"]
+        direction LR
+
+        subgraph Cameras["Camera nodes (one panel per configured camera)"]
+            direction TB
+            Cam1["front_camera [ONLINE]<br/>opencv 1920x1080 @30<br/>capture 30 fps<br/>to pub 4 ms<br/>ipc 0.62 ms<br/>drops slot 2 ipc 0<br/>subtitle: cost 3 ms"]
+            Cam2["side_camera [OFFLINE]<br/>realsense 1280x720 @30<br/>capture 0 fps<br/>to pub -<br/>ipc -<br/>drops slot 0 ipc 0<br/>error: device disconnected<br/>subtitle: cost -"]
+        end
+
+        Ipc["IPC<br/>>>>>>>><br/>PUSH / PULL"]
+
+        Supervisor["SUPERVISOR<br/>frame PULL, HWM 1<br/>control ROUTER<br/>workers N<br/>subtitle: cost N ms"]
+
+        Zmq["ZeroMQ<br/>>>>>>>><br/>PUB / REP"]
+
+        Service["SERVICE<br/>PUB tcp://host:5555<br/>REP tcp://host:5556<br/>rate N Mbps<br/>egress N Mbps<br/>clients N<br/>subtitle: cost N ms"]
+
+        Pub["PUB<br/>>>>>>>><br/>SUB"]
+
+        subgraph Clients["Connected clients (dynamic, vertical)"]
+            direction TB
+            Client1["192.168.5.21<br/>codec JPEG<br/>est rx N Mbps<br/>peer 54321/TCP<br/>subtitle: up HH:MM:SS"]
+            Client2["192.168.5.22<br/>codec JPEG<br/>est rx N Mbps<br/>peer 54322/TCP<br/>subtitle: up HH:MM:SS"]
+        end
+
+        Cameras --> Ipc --> Supervisor --> Zmq --> Service --> Pub --> Clients
+    end
+
+    classDef camera fill:#e8f4ea,stroke:#2f7d45,color:#173b21
+    classDef offline fill:#fce8e6,stroke:#b44b3e,color:#5a1e18
+    classDef supervisor fill:#f2eafa,stroke:#7b4aa5,color:#321b4d
+    classDef service fill:#e8f0fb,stroke:#3d6ea8,color:#1c3554
+    classDef client fill:#fff4df,stroke:#b47720,color:#4c3210
+    class Cam1 camera
+    class Cam2 offline
+    class Supervisor supervisor
+    class Service service
+    class Client1,Client2 client
+```
+
+### Panel fields
+
+- **Camera**: state, driver/profile, capture FPS, end-to-end capture-to-PUB
+  latency, IPC encode/send cost and drop counters. Its subtitle is the
+  measured `driver.read()` cost.
+- **SUPERVISOR**: IPC PULL and control ROUTER roles plus worker count. Its
+  subtitle is time from complete IPC receipt to beginning PUB forwarding.
+- **SERVICE**: the configured PUB and REP endpoints, current publish rate,
+  estimated egress (`rate × connected clients`) and client count. Its subtitle
+  is the local PUB enqueue cost.
+- **Client**: remote IP and TCP port, available codecs, estimated receive rate
+  and connection uptime. PUB/SUB cannot expose the client's actual
+  subscriptions, receive rate, drops or decode latency without an additional
+  client telemetry channel.
+
 `stream_pub` publishes camera frames as three-part ZeroMQ messages:
 
 ```text
@@ -112,6 +254,46 @@ flowchart LR
 
 Topics are `<camera-name>/color`. The header declares `schema_version`,
 `sequence`, capture timestamps, dimensions, pixel format and codec.
+
+### Frame header reference
+
+The second ZeroMQ message part is UTF-8 JSON. For example:
+
+```json
+{
+  "camera": "base_camera",
+  "captured_monotonic_ns": 77378702275284,
+  "captured_utc_ns": 1787108850771291701,
+  "codec": "jpeg",
+  "height": 480,
+  "payload_size": 56182,
+  "pixel_format": "bgr8",
+  "schema_version": 1,
+  "sequence": 44005,
+  "stream": "color",
+  "timestamp_source": "host",
+  "width": 640
+}
+```
+
+| Field | Example | Meaning and client use |
+| --- | --- | --- |
+| `schema_version` | `1` | Header contract version. Reject or explicitly handle unknown versions before decoding a frame. |
+| `camera` | `base_camera` | Configured camera name. Together with `stream`, it determines the topic `base_camera/color`. |
+| `stream` | `color` | Stream kind. The current service publishes only the BGR color stream. |
+| `sequence` | `44005` | Per-worker frame counter, beginning at `1` when a worker starts. A jump indicates skipped frames; it is not globally ordered and resets after a worker restart. |
+| `captured_monotonic_ns` | `77378702275284` | Host monotonic-clock timestamp at capture, in nanoseconds. Use only for elapsed-time calculations on the same server host; it has no UTC epoch and cannot be compared across hosts or persisted as wall-clock time. |
+| `captured_utc_ns` | `1787108850771291701` | Host wall-clock UTC timestamp at capture, in nanoseconds since Unix epoch. This sample is `2026-08-19T03:07:30.771291701Z`. It is suitable for logging and cross-machine correlation, subject to host clock synchronization. |
+| `timestamp_source` | `host` | Both timestamps are produced by the server host after `driver.read()` returns, not by a camera hardware clock. |
+| `width` / `height` | `640` / `480` | Image dimensions in pixels. For `raw_bgr8`, expected payload length is `width * height * 3`. |
+| `pixel_format` | `bgr8` | Pixel layout of the decoded image: 8-bit blue, green, red channels. JPEG payloads should decode to this layout with OpenCV. |
+| `codec` | `jpeg` | Payload encoding. `jpeg` requires image decoding; `raw_bgr8` is a directly reshaped BGR buffer. |
+| `payload_size` | `56182` | Byte count of the third ZeroMQ message part. Verify `len(payload) == payload_size` before decoding; it is `56,182` bytes in this sample. |
+
+For a `jpeg` frame, decode the third part with
+`cv2.imdecode(np.frombuffer(payload, dtype=np.uint8), cv2.IMREAD_COLOR)`. For
+`raw_bgr8`, first verify `payload_size == width * height * 3`, then reshape it
+to `(height, width, 3)` with `np.uint8`.
 
 `status_rep` accepts `{"op":"get_status"}` and returns the supervisor's
 current status snapshot. State changes are also published on the stream socket

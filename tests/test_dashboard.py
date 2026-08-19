@@ -56,7 +56,6 @@ def test_dashboard_renders_in_process_status() -> None:
         assert "192.168.5.22" in output.getvalue()
         assert "SUPERVISOR" in output.getvalue()
         assert "SERVICE" in output.getvalue()
-        assert "streams 1 available" in output.getvalue()
         assert "codec   JPEG" in output.getvalue()
         assert "est rx  0 Mbps" in output.getvalue()
         assert "peer    54321/TCP" in output.getvalue()
