@@ -1,7 +1,7 @@
 # camera-stream
 
 <p align="center">
-  <img alt="Python 3.10" src="https://img.shields.io/badge/Python-3.10-3776AB?logo=python&logoColor=white">
+  <img alt="Python 3.10 或更高版本" src="https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white">
   <img alt="Linux" src="https://img.shields.io/badge/platform-Linux-FCC624?logo=linux&logoColor=black">
   <img alt="ZeroMQ PUB SUB" src="https://img.shields.io/badge/transport-ZeroMQ%20PUB%2FSUB-DF5C32">
   <img alt="实时优先" src="https://img.shields.io/badge/policy-%E6%9C%80%E6%96%B0%E5%B8%A7%E4%BC%98%E5%85%88-16A34A">
