@@ -1,6 +1,6 @@
 [project]
 name = "camera-stream"
-version = "0.3.3"
+version = "0.3.4"
 description = "Low-latency multi-camera ZeroMQ streaming service and client library"
 readme = "README.md"
 requires-python = ">=3.10"

@@ -256,7 +256,7 @@ class VideoWall:
                     ("P99", self._ms(metrics["frame_interval_p99_ms"])),
                 ],
                 [
-                    ("AGE", f"{self._ms(view['frame_age_ms'])}*"),
+                    ("AGE", self._age(view["frame_age_ms"])),
                     ("RATE", f"{metrics['bitrate_mbps']:.2f} Mbps"),
                     ("PAYLOAD", f"{metrics['last_payload_size'] // 1024} KiB"),
                 ],
@@ -330,7 +330,7 @@ class VideoWall:
             self._draw_metric_row(
                 canvas,
                 [
-                    ("AGE", f"{self._ms(view['frame_age_ms'])}*"),
+                    ("AGE", self._age(view["frame_age_ms"])),
                     ("GAP LOSS", self._percent(metrics["gap_loss_percent"])),
                     ("LOCAL LOSS", self._percent(metrics["local_loss_percent"])),
                 ],
@@ -606,6 +606,22 @@ class VideoWall:
     @staticmethod
     def _ms(value: float | None) -> str:
         return "-" if value is None else f"{value:.1f} ms"
+
+    @staticmethod
+    def _age(value: float | None) -> str:
+        """Format a frame age for the HUD without losing short-latency detail."""
+        if value is None or not math.isfinite(value):
+            return "-"
+        value = max(0.0, value)
+        if value < 1_000:
+            return f"{value:.1f} ms"
+        if value < 60_000:
+            return f"{value / 1_000:.0f} s ago"
+        if value < 3_600_000:
+            return f"{value / 60_000:.0f} min ago"
+        if value < 86_400_000:
+            return f"{value / 3_600_000:.0f} h ago"
+        return f"{value / 86_400_000:.0f} d ago"
 
     @staticmethod
     def _percent(value: float) -> str:
