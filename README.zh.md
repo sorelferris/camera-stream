@@ -140,84 +140,34 @@ with StreamClient("tcp://192.168.5.24:5555") as client:
 
 ### 📬 发现相机 topic 与状态
 
-状态与图像复用同一个 `stream_pub` 端点。`status/` 订阅生效后会立即收到完整快照，随后可
-收到即时的单相机状态事件及每秒一次的完整快照。两者均为尽力而为的 PUB/SUB 消息：晚连接
-或慢速订阅者可能错过消息，但下一次快照会重新收敛状态。仅订阅 `status/` 不计入相机需求，
-因而不会唤醒采集。
+使用随附 CLI 发现 topic 和诊断状态。CLI 会处理底层协议与最新帧策略，因此业务代码无需
+自行管理 ZeroMQ socket 或解析状态消息。
 
-```python
-import json
+| 需求 | 推荐命令 | 是否唤醒相机 |
+| --- | --- | --- |
+| 列出可用相机 topic | `camera-stream topic list --endpoint tcp://HOST:5555` | 否 |
+| 列出 topic 与生命周期状态 | `camera-stream topic list --verbose --endpoint tcp://HOST:5555` | 否 |
+| 查看单流状态和帧头 | `camera-stream topic info base_camera/color --endpoint tcp://HOST:5555` | 是，临时唤醒 |
+| 查看帧头或测量 FPS / Mbps | `topic echo`、`topic hz`、`topic bw` | 是，命令运行期间 |
 
-import zmq
-
-context = zmq.Context()
-stream = context.socket(zmq.SUB)
-stream.setsockopt(zmq.RCVHWM, 1)
-stream.setsockopt(zmq.LINGER, 0)
-stream.setsockopt(zmq.SUBSCRIBE, b"status/")
-stream.connect("tcp://192.168.5.24:5555")
-
-try:
-    while True:
-        topic, payload = stream.recv_multipart()
-        message = json.loads(payload.decode("utf-8"))
-        if topic == b"status/snapshot" and message.get("type") == "snapshot":
-            for camera in message["cameras"]:
-                print(camera["name"], camera["state"])
-        elif topic.startswith(b"status/camera/"):
-            print(topic.decode(), message["state"], message.get("error"))
-finally:
-    stream.close()
-    context.term()
-```
-
-快照包含服务运行时长、已配置端点、当前码率、客户端元数据和所有单相机指标。状态事件
-使用 `status/camera/<camera-name>` 主题，且 `type` 为 `"camera_state"`；快照使用
-`status/snapshot`，且 `type` 为 `"snapshot"`。
+`list` 与 `list --verbose` 仅读取周期状态快照，不会产生相机需求。`info`、`echo`、`hz` 和
+`bw` 会订阅图像 topic，因此在启用空闲策略时会唤醒对应相机。
 
 ### 🖼️ 订阅相机流
 
-每个彩色流发布在 `<camera-name>/color` 主题下。下面的订阅者只读取 `base_camera`；
-高水位线设为一，因此客户端也保持最新帧优先策略。
+应用中应使用 `StreamClient`。它会解码 JPEG 或 `raw_bgr8`，只保留最新帧，并在后台更新
+状态。上方的完整示例即为推荐接入方式。
 
-```python
-import json
+| 需求 | `CameraStream` API |
+| --- | --- |
+| 等待一张新帧 | `camera.read(timeout=1)` |
+| 查看保留的最新帧 | `camera.read(block=False)` |
+| 观察生命周期 / 错误 | `camera.state`、`camera.error`、`camera.status` |
+| 查看本地接收和丢帧指标 | `camera.metrics` |
+| 停止一个图像 topic | `camera.unsubscribe()` |
 
-import zmq
-
-context = zmq.Context()
-stream = context.socket(zmq.SUB)
-stream.setsockopt(zmq.RCVHWM, 1)
-stream.setsockopt(zmq.LINGER, 0)
-stream.setsockopt(zmq.SUBSCRIBE, b"base_camera/color")
-stream.setsockopt(zmq.SUBSCRIBE, b"status/")
-stream.connect("tcp://192.168.5.24:5555")
-
-try:
-    while True:
-        parts = stream.recv_multipart()
-        if len(parts) == 2:
-            topic, status_bytes = parts
-            print(topic.decode("utf-8"), json.loads(status_bytes.decode("utf-8")))
-            continue
-        topic, header_bytes, payload = parts
-        header = json.loads(header_bytes.decode("utf-8"))
-        print(
-            topic.decode("utf-8"),
-            f"seq={header['sequence']}",
-            f"{header['width']}x{header['height']}",
-            f"codec={header['codec']}",
-            f"payload={len(payload)} bytes",
-        )
-        # 当 header["codec"] == "jpeg" 时使用 cv2.imdecode(...) 解码。
-finally:
-    stream.close()
-    context.term()
-```
-
-若需订阅所有相机主题，请订阅 `b""`。这也会收到两段式的
-`status/camera/<camera-name>` 事件和 `status/snapshot`，因此在将消息视作三段式图像帧前，
-需要检查消息段数。统一 `camera-stream` 包提供 `client` 图形调试命令。
+使用 `client` 命令可交互式查看所有已配置相机。下方的原生 ZeroMQ 多段消息布局仅作为高级
+互操作实现的协议参考，不是常规接入方式。
 
 ### 💤 空闲相机策略
 

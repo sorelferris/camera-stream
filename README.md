@@ -153,90 +153,38 @@ existing stream.
 
 ### 📬 Discover camera topics and status
 
-Status and frames use the same `stream_pub` endpoint. Subscribe to `status/`
-to receive an immediate full snapshot when the subscription becomes active,
-immediate per-camera state events, and a full snapshot every second. Both are
-best-effort PUB/SUB messages: a late or slow subscriber may miss a message,
-but the next snapshot lets it converge again. A `status/` subscription does not
-count as camera demand and therefore does not wake capture.
+Use the bundled CLI for topic discovery and diagnostics. It owns the wire
+protocol and latest-frame settings, so application code does not need to
+manage ZeroMQ sockets or parse status messages.
 
-```python
-import json
+| Need | Recommended command | Camera wake-up |
+| --- | --- | --- |
+| List available camera topics | `camera-stream topic list --endpoint tcp://HOST:5555` | No |
+| List topics with lifecycle state | `camera-stream topic list --verbose --endpoint tcp://HOST:5555` | No |
+| Inspect one stream's status and frame header | `camera-stream topic info base_camera/color --endpoint tcp://HOST:5555` | Yes, temporarily |
+| Watch headers or measure FPS / Mbps | `topic echo`, `topic hz`, `topic bw` | Yes, while running |
 
-import zmq
-
-context = zmq.Context()
-stream = context.socket(zmq.SUB)
-stream.setsockopt(zmq.RCVHWM, 1)
-stream.setsockopt(zmq.LINGER, 0)
-stream.setsockopt(zmq.SUBSCRIBE, b"status/")
-stream.connect("tcp://192.168.5.24:5555")
-
-try:
-    while True:
-        topic, payload = stream.recv_multipart()
-        message = json.loads(payload.decode("utf-8"))
-        if topic == b"status/snapshot" and message.get("type") == "snapshot":
-            for camera in message["cameras"]:
-                print(camera["name"], camera["state"])
-        elif topic.startswith(b"status/camera/"):
-            print(topic.decode(), message["state"], message.get("error"))
-finally:
-    stream.close()
-    context.term()
-```
-
-The snapshot includes service uptime, configured endpoint, current bitrate and
-client metadata as well as all per-camera metrics. State events use
-`status/camera/<camera-name>` and have `type: "camera_state"`; snapshots use
-`status/snapshot` and have `type: "snapshot"`.
+`list` and `list --verbose` read the periodic status snapshot and do not create
+camera demand. `info`, `echo`, `hz`, and `bw` subscribe to an image topic, so
+they wake that camera when the idle policy is enabled.
 
 ### 🖼️ Subscribe to a camera stream
 
-Each color stream is published under `<camera-name>/color`. The subscriber
-below reads only `base_camera`; its high-water mark of one preserves the
-latest-frame-wins policy on the client as well.
+For applications, use `StreamClient`; it decodes JPEG or `raw_bgr8`, keeps only
+the newest frame, and updates status in the background. The full usage example
+above is the recommended integration path.
 
-```python
-import json
+| Need | `CameraStream` API |
+| --- | --- |
+| Wait for a new frame | `camera.read(timeout=1)` |
+| Inspect the newest retained frame | `camera.read(block=False)` |
+| Observe lifecycle / error | `camera.state`, `camera.error`, `camera.status` |
+| Inspect local receive and drop metrics | `camera.metrics` |
+| Stop one image topic | `camera.unsubscribe()` |
 
-import zmq
-
-context = zmq.Context()
-stream = context.socket(zmq.SUB)
-stream.setsockopt(zmq.RCVHWM, 1)
-stream.setsockopt(zmq.LINGER, 0)
-stream.setsockopt(zmq.SUBSCRIBE, b"base_camera/color")
-stream.setsockopt(zmq.SUBSCRIBE, b"status/")
-stream.connect("tcp://192.168.5.24:5555")
-
-try:
-    while True:
-        parts = stream.recv_multipart()
-        if len(parts) == 2:
-            topic, status_bytes = parts
-            print(topic.decode("utf-8"), json.loads(status_bytes.decode("utf-8")))
-            continue
-        topic, header_bytes, payload = parts
-        header = json.loads(header_bytes.decode("utf-8"))
-        print(
-            topic.decode("utf-8"),
-            f"seq={header['sequence']}",
-            f"{header['width']}x{header['height']}",
-            f"codec={header['codec']}",
-            f"payload={len(payload)} bytes",
-        )
-        # Decode JPEG with cv2.imdecode(...) when header["codec"] == "jpeg".
-finally:
-    stream.close()
-    context.term()
-```
-
-To receive every camera topic, subscribe with `b""` instead. That also receives
-two-part `status/camera/<camera-name>` events and `status/snapshot`, so check
-the multipart length before treating a message as a three-part image frame. The
-same `camera-stream` package provides the visual client through the `client`
-command.
+Use the `client` command to view all configured cameras interactively. The raw
+ZeroMQ multipart layout is documented below only as a protocol reference for
+advanced interoperable implementations.
 
 ### 💤 Idle camera policy
 
