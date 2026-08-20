@@ -69,8 +69,18 @@ def topic_messages() -> list[list[bytes]]:
 
 
 def test_tui_flag_enables_the_in_process_dashboard() -> None:
-    args = build_parser().parse_args(["--config", "config.yaml", "--tui"])
+    args = build_parser().parse_args(["server", "--config", "config.yaml", "--tui"])
+    assert args.command == "server"
     assert args.tui is True
+
+
+def test_client_parser_accepts_visual_client_options() -> None:
+    args = build_parser().parse_args(
+        ["client", "--endpoint", "tcp://192.168.5.24:5555", "--camera", "front"]
+    )
+    assert args.command == "client"
+    assert args.endpoint == "tcp://192.168.5.24:5555"
+    assert args.camera == ["front"]
 
 
 def test_topic_parser_accepts_ros_like_commands() -> None:
@@ -129,13 +139,13 @@ def test_topic_echo_hz_and_bw_stop_after_requested_frames(capsys) -> None:
     assert "average bandwidth:" in output
 
 
-def test_unified_distribution_exposes_server_and_client_cli_names() -> None:
+def test_unified_distribution_exposes_one_top_level_cli() -> None:
     project_file = Path(__file__).parents[1] / "pyproject.toml"
     document = project_file.read_text(encoding="utf-8")
 
     assert 'name = "camera-stream"' in document
     assert 'camera-stream = "camera_stream.streamer:main"' in document
-    assert 'client = "camera_stream.client.cli:main"' in document
+    assert 'client = "camera_stream.client.cli:main"' not in document
 
 
 def test_download_template_writes_once_without_overwriting(
@@ -143,9 +153,9 @@ def test_download_template_writes_once_without_overwriting(
 ) -> None:
     monkeypatch.chdir(tmp_path)
 
-    assert main(["--download-template"]) == 0
+    assert main(["server", "--download-template"]) == 0
     template = tmp_path / "config.yaml"
     assert 'name: "camera0"' in template.read_text(encoding="utf-8")
     assert load_config(template).cameras[0].name == "camera0"
-    assert main(["--download-template"]) == 2
+    assert main(["server", "--download-template"]) == 2
     assert "refusing to overwrite" in capsys.readouterr().err

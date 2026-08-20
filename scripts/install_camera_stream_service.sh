@@ -167,7 +167,7 @@ install -d -m 0755 "$wrapper_dir" "$dropin_dir"
   printf '%s\n' '#!/usr/bin/env bash'
   printf '%s\n' 'set -euo pipefail'
   printf 'exec '
-  printf '%q ' "$uv_bin" run --project "$project_dir" camera-stream --config "$config_path"
+  printf '%q ' "$uv_bin" run --project "$project_dir" camera-stream server --config "$config_path"
   printf '\n'
 } >"$wrapper_path"
 chmod 0755 "$wrapper_path"

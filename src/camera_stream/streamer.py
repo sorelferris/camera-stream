@@ -6,6 +6,8 @@ import sys
 from importlib import resources
 from pathlib import Path
 
+from camera_stream.client.cli import add_arguments as add_client_arguments
+from camera_stream.client.cli import run as run_client
 from camera_stream.config import load_config
 from camera_stream.supervisor import Supervisor, install_signal_handlers
 from camera_stream.topic import add_topic_subcommands, run_topic_command
@@ -15,18 +17,24 @@ TEMPLATE_FILENAME = "config.yaml"
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Low-latency multi-camera ZeroMQ streamer"
+        description="Low-latency multi-camera ZeroMQ streaming tools"
     )
-    parser.add_argument("--config", type=Path, help="YAML service configuration")
-    parser.add_argument(
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    server = subparsers.add_parser("server", help="run the camera streaming server")
+    server.add_argument("--config", type=Path, help="YAML service configuration")
+    server.add_argument(
         "--tui", action="store_true", help="show the in-process Rich server dashboard"
     )
-    parser.add_argument(
+    server.add_argument(
         "--download-template",
         action="store_true",
         help="write a starter config.yaml into the current directory",
     )
-    subparsers = parser.add_subparsers(dest="command")
+
+    client = subparsers.add_parser("client", help="view camera streams graphically")
+    add_client_arguments(client)
+
     add_topic_subcommands(subparsers)
     return parser
 
@@ -59,6 +67,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser = build_parser()
     args = parser.parse_args(argv)
+    if args.command == "client":
+        return run_client(args)
     if args.command == "topic":
         try:
             return run_topic_command(args)
@@ -72,7 +82,7 @@ def main(argv: list[str] | None = None) -> int:
             )
         return download_template(Path.cwd() / TEMPLATE_FILENAME)
     if args.config is None:
-        parser.error("--config is required unless --download-template is used")
+        parser.error("server --config is required unless --download-template is used")
     try:
         config = load_config(args.config)
     except Exception as exc:  # noqa: BLE001 - CLI must report every config/parser error

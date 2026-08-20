@@ -47,8 +47,8 @@ flowchart LR
 
 | 从这里开始 | 命令 | 你将得到 |
 | --- | --- | --- |
-| 🖥️ 发布相机 | `uvx camera-stream --config ./config.yaml` | 服务端与可选 Rich TUI |
-| 👀 查看实时画面 | `uvx --from camera-stream client --endpoint tcp://HOST:5555` | 多相机图形监控工具 |
+| 🖥️ 发布相机 | `uvx camera-stream server --config ./config.yaml` | 服务端与可选 Rich TUI |
+| 👀 查看实时画面 | `uvx camera-stream client --endpoint tcp://HOST:5555` | 多相机图形监控工具 |
 | 🔎 诊断流 | `uvx camera-stream topic list --endpoint tcp://HOST:5555` | topic、状态、帧率和带宽信息 |
 | 🧩 Python 接入 | `from camera_stream import StreamClient` | 解码后的最新帧客户端 API |
 
@@ -62,16 +62,16 @@ PyPI 包并执行命令，无需手动安装。
 无需克隆仓库，即可启动仅使用 OpenCV/V4L2 的部署：
 
 ```bash
-uvx camera-stream --download-template
+uvx camera-stream server --download-template
 # 修改当前目录下的 ./config.yaml，填入本机设备与端点。
-uvx camera-stream --config ./config.yaml
+uvx camera-stream server --config ./config.yaml
 ```
 
 RealSense 与 Orbbec 驱动是可选包 extra。根据配置中的相机选择所需 extra：
 
 ```bash
 uvx --from 'camera-stream[realsense,orbbec]' \
-  camera-stream --config /absolute/path/to/config.yaml
+  camera-stream server --config /absolute/path/to/config.yaml
 ```
 
 `--download-template` 会在当前目录写入 OpenCV/V4L2 起步配置 `config.yaml`，若目标文件
@@ -82,7 +82,7 @@ uvx --from 'camera-stream[realsense,orbbec]' \
 图形客户端会自动发现已配置的相机，并显示全部彩色流及实时诊断信息：
 
 ```bash
-uvx --from camera-stream client --endpoint tcp://192.168.5.24:5555
+uvx camera-stream client --endpoint tcp://192.168.5.24:5555
 ```
 
 使用服务端实际可达的 IP，而不是绑定地址 `0.0.0.0`。
@@ -166,7 +166,7 @@ with StreamClient("tcp://192.168.5.24:5555") as client:
 | 查看本地接收和丢帧指标 | `camera.metrics` |
 | 停止一个图像 topic | `camera.unsubscribe()` |
 
-使用 `client` 命令可交互式查看所有已配置相机。下方的原生 ZeroMQ 多段消息布局仅作为高级
+使用 `camera-stream client` 命令可交互式查看所有已配置相机。下方的原生 ZeroMQ 多段消息布局仅作为高级
 互操作实现的协议参考，不是常规接入方式。
 
 ### 💤 空闲相机策略
@@ -197,22 +197,22 @@ idle_policy:
 
 ```bash
 uv sync --extra realsense --extra orbbec
-uv run camera-stream --config config.yaml
+uv run camera-stream server --config config.yaml
 ```
 
 从工作区运行本地客户端：
 
 ```bash
-uv run client \
+uv run camera-stream client \
   --endpoint=tcp://127.0.0.1:5555
 ```
 
-`uv run client` 使用当前检出目录的源码。
+`uv run camera-stream client` 使用当前检出目录的源码。
 
 本机若有三台可用的 V4L2 设备，可使用示例配置开发和查看服务端 TUI：
 
 ```bash
-uv run camera-stream --config config.demo.yaml --tui
+uv run camera-stream server --config config.demo.yaml --tui
 ```
 
 `--tui` 在同一个服务端进程中显示 Rich 仪表盘。它直接读取进程内状态，不创建 ZeroMQ
@@ -307,7 +307,7 @@ flowchart LR
 
 ## 📊 TUI 仪表盘
 
-运行 `camera-stream --config config.yaml --tui` 可以显示进程内拓扑视图。节点相对于相邻
+运行 `camera-stream server --config config.yaml --tui` 可以显示进程内拓扑视图。节点相对于相邻
 节点栈垂直居中；每个箭头依次标记协议、方向和传输形式。
 
 ```mermaid

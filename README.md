@@ -49,8 +49,8 @@ flowchart LR
 
 | Start here | Command | What it gives you |
 | --- | --- | --- |
-| 🖥️ Publish cameras | `uvx camera-stream --config ./config.yaml` | Server and optional Rich TUI |
-| 👀 Inspect live video | `uvx --from camera-stream client --endpoint tcp://HOST:5555` | Graphical multi-camera monitor |
+| 🖥️ Publish cameras | `uvx camera-stream server --config ./config.yaml` | Server and optional Rich TUI |
+| 👀 Inspect live video | `uvx camera-stream client --endpoint tcp://HOST:5555` | Graphical multi-camera monitor |
 | 🔎 Diagnose streams | `uvx camera-stream topic list --endpoint tcp://HOST:5555` | Topics, status, FPS, and bandwidth |
 | 🧩 Embed in Python | `from camera_stream import StreamClient` | Decoded latest-frame client API |
 
@@ -64,9 +64,9 @@ isolated cached environment and runs its command without a manual install.
 Start an OpenCV/V4L2 deployment without cloning this repository:
 
 ```bash
-uvx camera-stream --download-template
+uvx camera-stream server --download-template
 # Edit ./config.yaml for local devices and endpoints.
-uvx camera-stream --config ./config.yaml
+uvx camera-stream server --config ./config.yaml
 ```
 
 RealSense and Orbbec drivers are package extras. Select those required by the
@@ -74,7 +74,7 @@ configuration:
 
 ```bash
 uvx --from 'camera-stream[realsense,orbbec]' \
-  camera-stream --config /absolute/path/to/config.yaml
+  camera-stream server --config /absolute/path/to/config.yaml
 ```
 
 `--download-template` writes a starter OpenCV/V4L2 `config.yaml` into the
@@ -87,7 +87,7 @@ The graphical client discovers configured cameras and displays all color
 streams with live diagnostics:
 
 ```bash
-uvx --from camera-stream client --endpoint tcp://192.168.5.24:5555
+uvx camera-stream client --endpoint tcp://192.168.5.24:5555
 ```
 
 Use the server's reachable IP address, not its bind address `0.0.0.0`.
@@ -182,7 +182,7 @@ above is the recommended integration path.
 | Inspect local receive and drop metrics | `camera.metrics` |
 | Stop one image topic | `camera.unsubscribe()` |
 
-Use the `client` command to view all configured cameras interactively. The raw
+Use `camera-stream client` to view all configured cameras interactively. The raw
 ZeroMQ multipart layout is documented below only as a protocol reference for
 advanced interoperable implementations.
 
@@ -217,22 +217,22 @@ Install the drivers used by `config.yaml`, then run the service:
 
 ```bash
 uv sync --extra realsense --extra orbbec
-uv run camera-stream --config config.yaml
+uv run camera-stream server --config config.yaml
 ```
 
 Run the local client source with the workspace command:
 
 ```bash
-uv run client \
+uv run camera-stream client \
   --endpoint=tcp://127.0.0.1:5555
 ```
 
-`uv run client` uses the current checkout source.
+`uv run camera-stream client` uses the current checkout source.
 
 Use the bundled V4L2 demo and the in-process server TUI when developing:
 
 ```bash
-uv run camera-stream --config config.demo.yaml --tui
+uv run camera-stream server --config config.demo.yaml --tui
 ```
 
 `--tui` renders the Rich server dashboard in the same process. Without it, the
@@ -344,7 +344,7 @@ flowchart LR
 
 ## 📊 TUI Dashboard
 
-Run `camera-stream --config config.yaml --tui` to render the following
+Run `camera-stream server --config config.yaml --tui` to render the following
 in-process topology view. Nodes are vertically centered against their adjacent
 node stacks; each arrow is shown as protocol, direction and transport labels.
 

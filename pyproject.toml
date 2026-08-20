@@ -1,6 +1,6 @@
 [project]
 name = "camera-stream"
-version = "0.2.0"
+version = "0.3.0"
 description = "Low-latency multi-camera ZeroMQ streaming service and client library"
 readme = "README.md"
 requires-python = "==3.10.*"
@@ -16,7 +16,6 @@ dependencies = [
 
 [project.scripts]
 camera-stream = "camera_stream.streamer:main"
-client = "camera_stream.client.cli:main"
 
 [project.optional-dependencies]
 realsense = ["pyrealsense2>=2.58.3.10794"]
