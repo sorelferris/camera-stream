@@ -145,16 +145,10 @@ class VideoWall:
                 MUTED,
             )
             return []
-        count = len(views)
-        if count == 1:
-            rows, columns = 1, 1
-        else:
-            columns = math.ceil(
-                math.sqrt(count * canvas.shape[1] / max(available_height, 1))
-            )
-            columns = max(1, min(count, columns))
-            rows = math.ceil(count / columns)
         gap = 8
+        rows, columns = self._grid_shape(
+            views, canvas.shape[1], available_height, gap=gap
+        )
         cell_width = max(1, (canvas.shape[1] - gap * (columns + 1)) // columns)
         cell_height = max(1, (available_height - gap * (rows + 1)) // rows)
         hits: list[TileHit] = []
@@ -165,6 +159,61 @@ class VideoWall:
             self._draw_tile(canvas, view, x, y, cell_width, cell_height)
             hits.append(TileHit(view["name"], (x, y, cell_width, cell_height)))
         return hits
+
+    @classmethod
+    def _grid_shape(
+        cls,
+        views: list[dict[str, Any]],
+        width: int,
+        height: int,
+        *,
+        gap: int,
+    ) -> tuple[int, int]:
+        """Choose rows and columns by maximizing visible camera image area.
+
+        A pure window-aspect heuristic chooses 3 columns for four 4:3 streams
+        in a 16:10 window. That leaves each image unnecessarily narrow. Scoring
+        candidate grids by their letterboxed content area naturally selects a
+        2x2 layout while still adapting to portrait windows and mixed profiles.
+        """
+        count = len(views)
+        if count <= 1:
+            return 1, 1
+
+        best: tuple[float, int, int] | None = None
+        for columns in range(1, count + 1):
+            rows = math.ceil(count / columns)
+            cell_width = max(1, (width - gap * (columns + 1)) // columns)
+            cell_height = max(1, (height - gap * (rows + 1)) // rows)
+            visible_area = sum(
+                cls._letterboxed_area(cell_width, cell_height, cls._view_aspect(view))
+                for view in views
+            )
+            # Prefer fewer empty slots when area is effectively tied.
+            score = (visible_area, -(rows * columns - count), -columns)
+            if best is None or score > (best[0], best[1], best[2]):
+                best = (visible_area, -(rows * columns - count), -columns)
+                best_shape = (rows, columns)
+        return best_shape
+
+    @staticmethod
+    def _view_aspect(view: dict[str, Any]) -> float:
+        image = view.get("image")
+        if isinstance(image, np.ndarray) and image.ndim >= 2 and image.shape[0]:
+            return max(0.1, image.shape[1] / image.shape[0])
+        header = view.get("header") or {}
+        try:
+            width = float(header.get("width", 4))
+            height = float(header.get("height", 3))
+        except (TypeError, ValueError):
+            return 4 / 3
+        return width / height if width > 0 and height > 0 else 4 / 3
+
+    @staticmethod
+    def _letterboxed_area(width: int, height: int, aspect: float) -> float:
+        displayed_width = min(width, height * aspect)
+        displayed_height = min(height, width / aspect)
+        return displayed_width * displayed_height
 
     def _draw_focus(self, canvas: np.ndarray, view: dict[str, Any]) -> list[TileHit]:
         """Render one selected tile over the full available window."""

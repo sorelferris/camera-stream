@@ -186,6 +186,38 @@ def test_focused_tile_uses_the_full_window() -> None:
     assert canvas.shape == (900, 1440, 3)
 
 
+def test_four_camera_grid_prefers_two_by_two_layout(monkeypatch) -> None:
+    wall = VideoWall("tcp://stream")
+    views = [
+        {
+            "name": f"camera-{index}",
+            "image": np.zeros((480, 640, 3), dtype=np.uint8),
+            "header": {"width": 640, "height": 480},
+        }
+        for index in range(4)
+    ]
+    drawn: list[tuple[int, int, int, int]] = []
+    monkeypatch.setattr(
+        wall,
+        "_draw_tile",
+        lambda _canvas, _view, x, y, width, height: drawn.append((x, y, width, height)),
+    )
+
+    wall._draw_grid(np.zeros((900, 1440, 3), dtype=np.uint8), views)
+
+    assert len(drawn) == 4
+    assert {rect[0] for rect in drawn} == {8, 724}
+    assert {rect[1] for rect in drawn} == {62, 477}
+    assert all(rect[2] == 708 and rect[3] == 407 for rect in drawn)
+
+
+def test_grid_shape_adapts_camera_count() -> None:
+    views = [{"image": np.zeros((480, 640, 3), dtype=np.uint8)} for _ in range(5)]
+
+    assert VideoWall._grid_shape(views[:4], 1440, 846, gap=8) == (2, 2)
+    assert VideoWall._grid_shape(views, 1440, 846, gap=8) == (2, 3)
+
+
 def test_server_state_label_explains_missing_status_source() -> None:
     unknown = {"server": {}, "stream_state": None}
 
