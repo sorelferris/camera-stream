@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import queue
+import subprocess
+import sys
 import threading
 from pathlib import Path
 
@@ -81,6 +83,33 @@ def test_client_parser_accepts_visual_client_options() -> None:
     assert args.command == "client"
     assert args.endpoint == "tcp://192.168.5.24:5555"
     assert args.camera == ["front"]
+
+
+def test_client_command_does_not_import_posix_tty_modules() -> None:
+    script = """
+import builtins
+
+original_import = builtins.__import__
+
+def block_posix_tty(name, *args, **kwargs):
+    if name in {"termios", "tty"}:
+        raise ModuleNotFoundError(f"No module named {name!r}")
+    return original_import(name, *args, **kwargs)
+
+builtins.__import__ = block_posix_tty
+from camera_stream.streamer import build_parser
+
+assert build_parser().parse_args(
+    ["client", "--endpoint", "tcp://192.168.5.24:5555"]
+).command == "client"
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 def test_topic_parser_accepts_ros_like_commands() -> None:

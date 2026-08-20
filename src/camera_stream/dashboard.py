@@ -3,10 +3,15 @@ from __future__ import annotations
 import os
 import select
 import sys
-import termios
 import time
-import tty
 from typing import Any
+
+try:
+    import termios
+    import tty
+except ModuleNotFoundError:  # Windows has no POSIX terminal mode APIs.
+    termios = None  # type: ignore[assignment]
+    tty = None  # type: ignore[assignment]
 
 from rich.align import Align
 from rich.console import Group, RenderableType
@@ -264,6 +269,8 @@ class Dashboard:
         self._restore_input()
 
     def _start_input(self) -> None:
+        if termios is None or tty is None:
+            return
         try:
             fd = sys.stdin.fileno()
             if not os.isatty(fd):
@@ -287,7 +294,7 @@ class Dashboard:
             return False
 
     def _restore_input(self) -> None:
-        if self._input_fd is None or self._input_attributes is None:
+        if termios is None or self._input_fd is None or self._input_attributes is None:
             return
         try:
             termios.tcsetattr(self._input_fd, termios.TCSADRAIN, self._input_attributes)

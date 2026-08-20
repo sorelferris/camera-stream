@@ -8,8 +8,6 @@ from pathlib import Path
 
 from camera_stream.client.cli import add_arguments as add_client_arguments
 from camera_stream.client.cli import run as run_client
-from camera_stream.config import load_config
-from camera_stream.supervisor import Supervisor, install_signal_handlers
 from camera_stream.topic import add_topic_subcommands, run_topic_command
 
 TEMPLATE_FILENAME = "config.yaml"
@@ -83,6 +81,10 @@ def main(argv: list[str] | None = None) -> int:
         return download_template(Path.cwd() / TEMPLATE_FILENAME)
     if args.config is None:
         parser.error("server --config is required unless --download-template is used")
+    # Keep the graphical client importable on Windows without server-only modules.
+    from camera_stream.config import load_config
+    from camera_stream.supervisor import Supervisor, install_signal_handlers
+
     try:
         config = load_config(args.config)
     except Exception as exc:  # noqa: BLE001 - CLI must report every config/parser error
