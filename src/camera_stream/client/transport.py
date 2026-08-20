@@ -52,7 +52,7 @@ class StatusStore:
 
 
 class StreamReceiver(threading.Thread):
-    """Owns the SUB socket and forwards only the latest validated frames."""
+    """Owns one SUB socket and forwards only the latest validated frames."""
 
     def __init__(
         self,
@@ -73,38 +73,29 @@ class StreamReceiver(threading.Thread):
 
     def run(self) -> None:
         context = zmq.Context()
-        status_socket = context.socket(zmq.SUB)
-        status_socket.setsockopt(zmq.RCVHWM, 1)
-        status_socket.setsockopt(zmq.LINGER, 0)
-        status_socket.setsockopt(zmq.SUBSCRIBE, b"status/")
-        image_socket = context.socket(zmq.SUB)
-        image_socket.setsockopt(zmq.RCVHWM, 1)
-        image_socket.setsockopt(zmq.LINGER, 0)
+        stream = context.socket(zmq.SUB)
+        stream.setsockopt(zmq.RCVHWM, 1)
+        stream.setsockopt(zmq.LINGER, 0)
+        stream.setsockopt(zmq.SUBSCRIBE, b"status/")
         for camera in sorted(self._image_subscriptions):
-            image_socket.setsockopt(zmq.SUBSCRIBE, f"{camera}/color".encode())
-        status_socket.connect(self.endpoint)
-        image_socket.connect(self.endpoint)
+            stream.setsockopt(zmq.SUBSCRIBE, f"{camera}/color".encode())
+        stream.connect(self.endpoint)
         poller = zmq.Poller()
-        poller.register(status_socket, zmq.POLLIN)
-        poller.register(image_socket, zmq.POLLIN)
+        poller.register(stream, zmq.POLLIN)
         try:
             while not self.stop.is_set():
                 events = dict(poller.poll(100))
-                if status_socket in events:
-                    self._drain(status_socket, image_socket)
-                if image_socket in events:
-                    self._drain(image_socket, image_socket)
+                if stream in events:
+                    self._drain(stream)
         except zmq.ZMQError as exc:
             if not self.stop.is_set():
                 self.error = str(exc)
         finally:
-            poller.unregister(status_socket)
-            poller.unregister(image_socket)
-            status_socket.close(0)
-            image_socket.close(0)
+            poller.unregister(stream)
+            stream.close(0)
             context.term()
 
-    def _drain(self, socket: zmq.Socket, image_socket: zmq.Socket) -> None:
+    def _drain(self, socket: zmq.Socket) -> None:
         while not self.stop.is_set():
             try:
                 parts = socket.recv_multipart(flags=zmq.DONTWAIT)
@@ -121,7 +112,7 @@ class StreamReceiver(threading.Thread):
             if isinstance(message, StatusSnapshot):
                 self.status_store.success(message.snapshot)
                 self.registry.apply_status_snapshot(message.snapshot)
-                self._subscribe_discovered_cameras(image_socket, message.snapshot)
+                self._subscribe_discovered_cameras(socket, message.snapshot)
                 continue
             self.registry.receive(message, time.monotonic_ns(), time.time_ns())
 

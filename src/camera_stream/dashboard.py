@@ -1,6 +1,11 @@
 from __future__ import annotations
 
+import os
+import select
+import sys
+import termios
 import time
+import tty
 from typing import Any
 
 from rich.align import Align
@@ -21,6 +26,8 @@ class Dashboard:
         self.refresh_per_second = refresh_per_second
         self.live: Live | None = None
         self.next_update_at = 0.0
+        self._input_fd: int | None = None
+        self._input_attributes: list[Any] | None = None
 
     def render(self) -> RenderableType:
         snapshot = self.supervisor.status_snapshot()
@@ -112,7 +119,10 @@ class Dashboard:
         return Panel(
             details,
             title=f"{camera.name}  [{state}]",
-            subtitle=f"cost {self._cost_milliseconds(self._camera_cost_ms(status))}",
+            subtitle=(
+                f"cost {self._cost_milliseconds(self._camera_cost_ms(status))}"
+                f" | demand {status.get('demand_subscriptions', 0)}"
+            ),
             border_style=state_style,
             padding=(0, 1),
         )
@@ -228,6 +238,7 @@ class Dashboard:
         return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
 
     def start(self) -> None:
+        self._start_input()
         self.live = Live(
             self.render(),
             refresh_per_second=self.refresh_per_second,
@@ -236,13 +247,52 @@ class Dashboard:
         self.live.start()
         self.next_update_at = time.monotonic()
 
-    def update(self) -> None:
+    def update(self) -> bool:
+        """Refresh the dashboard and return ``True`` when the user presses q."""
+        if self._read_quit_key():
+            return True
         if self.live is None or time.monotonic() < self.next_update_at:
-            return
+            return False
         self.live.update(self.render(), refresh=False)
         self.next_update_at = time.monotonic() + 1 / self.refresh_per_second
+        return False
 
     def stop(self) -> None:
         if self.live is not None:
             self.live.stop()
             self.live = None
+        self._restore_input()
+
+    def _start_input(self) -> None:
+        try:
+            fd = sys.stdin.fileno()
+            if not os.isatty(fd):
+                return
+            attributes = termios.tcgetattr(fd)
+            tty.setcbreak(fd)
+        except (AttributeError, OSError, termios.error):
+            return
+        self._input_fd = fd
+        self._input_attributes = attributes
+
+    def _read_quit_key(self) -> bool:
+        if self._input_fd is None:
+            return False
+        try:
+            readable, _, _ = select.select([self._input_fd], [], [], 0)
+            if not readable:
+                return False
+            return b"q" in os.read(self._input_fd, 32).lower()
+        except OSError:
+            return False
+
+    def _restore_input(self) -> None:
+        if self._input_fd is None or self._input_attributes is None:
+            return
+        try:
+            termios.tcsetattr(self._input_fd, termios.TCSADRAIN, self._input_attributes)
+        except termios.error:
+            pass
+        finally:
+            self._input_fd = None
+            self._input_attributes = None

@@ -1,9 +1,13 @@
 import json
 import socket
+import threading
 import time
+from collections.abc import Callable
 
 import zmq
 
+from camera_stream.client.state import CameraRegistry
+from camera_stream.client.transport import StatusStore, StreamReceiver
 from camera_stream.config import ServiceConfig
 from camera_stream.supervisor import Supervisor
 
@@ -56,6 +60,18 @@ def idle_service_config() -> ServiceConfig:
     document = service_config().model_dump(mode="json")
     document["idle_policy"] = {"enabled": True, "sleep_after_s": 1}
     return ServiceConfig.model_validate(document)
+
+
+def _handle_monitor_until(
+    supervisor: Supervisor, condition: Callable[[], bool]
+) -> bool:
+    deadline = time.monotonic() + 1.0
+    while time.monotonic() < deadline:
+        if supervisor.stream_monitor.poll(20) == zmq.POLLIN:
+            supervisor._handle_stream_monitor()
+        if condition():
+            return True
+    return False
 
 
 def test_first_capture_updates_status_without_waiting_for_heartbeat() -> None:
@@ -176,6 +192,60 @@ def test_client_ip_reads_tcp_peer_address() -> None:
     finally:
         client.close()
         listener.close()
+
+
+def test_visual_client_uses_one_tcp_peer() -> None:
+    supervisor = Supervisor(service_config())
+    stop = threading.Event()
+    receiver = StreamReceiver(
+        supervisor.stream_pub.getsockopt_string(zmq.LAST_ENDPOINT),
+        set(),
+        CameraRegistry(set()),
+        StatusStore(),
+        stop,
+    )
+    try:
+        receiver.start()
+        assert _handle_monitor_until(supervisor, lambda: bool(supervisor.clients))
+        assert len(supervisor.clients) == 1
+    finally:
+        stop.set()
+        receiver.join(timeout=1.0)
+        supervisor.shutdown()
+
+
+def test_status_only_peer_does_not_keep_a_camera_awake() -> None:
+    supervisor = Supervisor(idle_service_config())
+    record = supervisor.records["cam"]
+    record.process = StuckWorkerProcess()
+    context = zmq.Context()
+    status = context.socket(zmq.SUB)
+    status.setsockopt(zmq.LINGER, 0)
+    status.setsockopt(zmq.SUBSCRIBE, b"status/")
+    image = context.socket(zmq.SUB)
+    image.setsockopt(zmq.LINGER, 0)
+    image.setsockopt(zmq.SUBSCRIBE, b"cam/color")
+    endpoint = supervisor.stream_pub.getsockopt_string(zmq.LAST_ENDPOINT)
+    status.connect(endpoint)
+    image.connect(endpoint)
+    try:
+        deadline = time.monotonic() + 1.0
+        while time.monotonic() < deadline and not record.demand_subscriptions:
+            if supervisor.stream_pub.poll(20) == zmq.POLLIN:
+                supervisor._handle_stream_subscriptions()
+        assert record.demand_subscriptions == 1
+
+        image.close(0)
+        deadline = time.monotonic() + 1.0
+        while time.monotonic() < deadline and record.demand_subscriptions:
+            if supervisor.stream_pub.poll(20) == zmq.POLLIN:
+                supervisor._handle_stream_subscriptions()
+        assert record.demand_subscriptions == 0
+        assert record.status["state"] == "IDLE_PENDING"
+    finally:
+        status.close(0)
+        context.term()
+        supervisor.shutdown()
 
 
 def test_idle_camera_sleeps_after_grace_period(monkeypatch) -> None:

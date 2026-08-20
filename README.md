@@ -345,8 +345,9 @@ flowchart LR
 ## 📊 TUI Dashboard
 
 Run `camera-stream server --config config.yaml --tui` to render the following
-in-process topology view. Nodes are vertically centered against their adjacent
-node stacks; each arrow is shown as protocol, direction and transport labels.
+in-process topology view. Press `q` to stop the server cleanly. Nodes are
+vertically centered against their adjacent node stacks; each arrow is shown as
+protocol, direction and transport labels.
 
 ```mermaid
 flowchart LR
@@ -355,8 +356,8 @@ flowchart LR
 
         subgraph Cameras["Camera nodes (one panel per configured camera)"]
             direction TB
-            Cam1["front_camera [ONLINE]<br/>opencv 1920x1080 @30<br/>capture 30 fps<br/>to pub 4 ms<br/>ipc 0.62 ms<br/>drops slot 2 ipc 0<br/>subtitle: cost 3 ms"]
-            Cam2["side_camera [SLEEPING]<br/>realsense 1280x720 @30<br/>capture 0 fps<br/>to pub -<br/>ipc -<br/>drops slot 0 ipc 0<br/>no subscribed stream topic<br/>subtitle: cost -"]
+            Cam1["front_camera [ONLINE]<br/>opencv 1920x1080 @30<br/>capture 30 fps<br/>to pub 4 ms<br/>ipc 0.62 ms<br/>drops slot 2 ipc 0<br/>subtitle: cost 3 ms | demand 1"]
+            Cam2["side_camera [SLEEPING]<br/>realsense 1280x720 @30<br/>capture 0 fps<br/>to pub -<br/>ipc -<br/>drops slot 0 ipc 0<br/>no subscribed stream topic<br/>subtitle: cost - | demand 0"]
         end
 
         Ipc["IPC<br/>>>>>>>><br/>PUSH / PULL"]
@@ -393,9 +394,11 @@ flowchart LR
 ### 🧾 Panel fields
 
 - **Camera**: state, driver/profile, capture FPS, end-to-end capture-to-PUB
-  latency, IPC encode/send cost and drop counters. With idle policy enabled,
+  latency, IPC encode/send cost and drop counters. Its subtitle includes the
+  current matching image-topic `demand`: `0` means no image subscriber is
+  keeping the camera awake. With idle policy enabled,
   `IDLE_PENDING`, `SLEEPING`, and `WAKING` show demand-driven lifecycle state.
-  Its subtitle is the measured `driver.read()` cost.
+  Its `cost` is the measured `driver.read()` cost.
 - **SUPERVISOR**: IPC PULL and control ROUTER roles plus worker count. Its
   `active/total` worker count reveals cameras currently kept awake. Its
   subtitle is time from complete IPC receipt to beginning PUB forwarding.

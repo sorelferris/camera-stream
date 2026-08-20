@@ -307,8 +307,8 @@ flowchart LR
 
 ## 📊 TUI 仪表盘
 
-运行 `camera-stream server --config config.yaml --tui` 可以显示进程内拓扑视图。节点相对于相邻
-节点栈垂直居中；每个箭头依次标记协议、方向和传输形式。
+运行 `camera-stream server --config config.yaml --tui` 可以显示进程内拓扑视图。按 `q` 可正常
+停止服务。节点相对于相邻节点栈垂直居中；每个箭头依次标记协议、方向和传输形式。
 
 ```mermaid
 flowchart LR
@@ -317,8 +317,8 @@ flowchart LR
 
         subgraph Cameras["相机节点（每个已配置相机一个面板）"]
             direction TB
-            Cam1["front_camera [ONLINE]<br/>opencv 1920x1080 @30<br/>capture 30 fps<br/>to pub 4 ms<br/>ipc 0.62 ms<br/>drops slot 2 ipc 0<br/>subtitle: cost 3 ms"]
-            Cam2["side_camera [SLEEPING]<br/>realsense 1280x720 @30<br/>capture 0 fps<br/>to pub -<br/>ipc -<br/>drops slot 0 ipc 0<br/>无已订阅的流主题<br/>subtitle: cost -"]
+            Cam1["front_camera [ONLINE]<br/>opencv 1920x1080 @30<br/>capture 30 fps<br/>to pub 4 ms<br/>ipc 0.62 ms<br/>drops slot 2 ipc 0<br/>subtitle: cost 3 ms | demand 1"]
+            Cam2["side_camera [SLEEPING]<br/>realsense 1280x720 @30<br/>capture 0 fps<br/>to pub -<br/>ipc -<br/>drops slot 0 ipc 0<br/>无已订阅的流主题<br/>subtitle: cost - | demand 0"]
         end
 
         Ipc["IPC<br/>>>>>>>><br/>PUSH / PULL"]
@@ -340,8 +340,9 @@ flowchart LR
 ### 🧾 面板字段
 
 - **Camera**：状态、驱动/配置、采集 FPS、从采集到 PUB 的端到端延迟、IPC 编码/发送
-  耗时及丢帧计数。启用空闲策略后，`IDLE_PENDING`、`SLEEPING` 和 `WAKING` 表示按
-  订阅需求变化的生命周期状态。副标题为测得的 `driver.read()` 耗时。
+  耗时及丢帧计数。副标题包含匹配图像 topic 的当前 `demand`：`0` 表示没有图像订阅者
+  保持相机唤醒。启用空闲策略后，`IDLE_PENDING`、`SLEEPING` 和 `WAKING` 表示按
+  订阅需求变化的生命周期状态。副标题中的 `cost` 为测得的 `driver.read()` 耗时。
 - **SUPERVISOR**：IPC PULL 和控制 ROUTER 角色，以及 worker 数量。`active/total`
   表示当前保持唤醒的相机数/相机总数。副标题是从完整 IPC 接收至开始 PUB 转发的时间。
 - **SERVICE**：配置的 XPUB（兼容 PUB/SUB）端点、周期状态快照频率、当前发布速率、估算

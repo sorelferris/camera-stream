@@ -58,7 +58,7 @@ def test_dashboard_renders_in_process_status() -> None:
         assert "codec   JPEG" in output.getvalue()
         assert "est rx  0 Mbps" in output.getvalue()
         assert "peer    54321/TCP" in output.getvalue()
-        assert "cost 4 ms" in output.getvalue()
+        assert "cost 4 ms | demand 0" in output.getvalue()
         assert "cost 2 ms" in output.getvalue()
         assert "cost 0.60 ms" in output.getvalue()
         assert "PUB  tcp://127.0.0.1:*" in output.getvalue()
@@ -91,3 +91,14 @@ def test_dashboard_arrow_places_marker_between_labels() -> None:
 def test_dashboard_formats_sub_millisecond_costs_with_decimals() -> None:
     assert Dashboard._cost_milliseconds(0.62) == "0.62 ms"
     assert Dashboard._cost_milliseconds(1.0) == "1 ms"
+
+
+def test_dashboard_q_key_requests_exit(monkeypatch) -> None:
+    dashboard = Dashboard(object())
+    dashboard._input_fd = 7
+    monkeypatch.setattr(
+        "camera_stream.dashboard.select.select", lambda *_args: ([7], [], [])
+    )
+    monkeypatch.setattr("camera_stream.dashboard.os.read", lambda *_args: b"Q")
+
+    assert dashboard.update() is True

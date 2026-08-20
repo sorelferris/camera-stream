@@ -621,8 +621,8 @@ class Supervisor:
                 self._monitor_workers()
                 self._reconcile_idle_policy()
                 self._publish_status_snapshot()
-                if dashboard is not None:
-                    dashboard.update()
+                if dashboard is not None and dashboard.update():
+                    self.stop_requested = True
         finally:
             if dashboard is not None:
                 dashboard.stop()
