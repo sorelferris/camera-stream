@@ -62,6 +62,7 @@ class CameraStream:
         self.name = topic.removesuffix("/color")
         self._condition = threading.Condition()
         self._frame: Frame | None = None
+        self._latest_frame: Frame | None = None
         self._closed = False
         self._state: str | None = None
         self._error: str | None = None
@@ -74,13 +75,25 @@ class CameraStream:
         self._last_received_ns = 0
         self._intervals_ns: list[int] = []
 
-    def read(self, timeout: float | None = None) -> Frame:
-        """Wait for and consume the next available frame.
+    def read(self, timeout: float | None = None, *, block: bool = True) -> Frame | None:
+        """Read a frame, optionally waiting for an unread one.
 
-        Each call returns the newest frame received since the prior successful
-        call. Intermediate frames are deliberately replaced, never queued.
-        ``TimeoutError`` means no newer frame arrived before ``timeout``.
+        A blocking call consumes the newest frame received since the prior
+        successful blocking read. Intermediate frames are deliberately
+        replaced, never queued.
+        With ``block=False``, this returns the most recently received frame
+        without consuming it, or ``None`` before first receipt. ``timeout`` is
+        only valid when blocking; a blocking read raises ``TimeoutError`` when
+        it expires.
         """
+        if not isinstance(block, bool):
+            raise TypeError("block must be a bool")
+        if not block:
+            if timeout is not None:
+                raise ValueError("timeout is only valid when block=True")
+            with self._condition:
+                self._raise_if_unavailable()
+                return self._latest_frame
         deadline = None if timeout is None else time.monotonic() + timeout
         with self._condition:
             while self._frame is None:
@@ -94,12 +107,28 @@ class CameraStream:
             return frame
 
     def latest(self) -> Frame | None:
-        """Consume the latest available frame without waiting, or return ``None``."""
-        with self._condition:
-            frame, self._frame = self._frame, None
-            return frame
+        """Compatibility alias for ``read(block=False)``."""
+        return self.read(block=False)
 
     read_latest = latest
+
+    def warm_up(self, timeout: float | None = None) -> Frame:
+        """Wait for the first decoded frame without consuming it.
+
+        Once this returns, ``read(block=False)``, :meth:`latest`, and
+        :attr:`last_frame` all return a frame until the subscription is closed.
+        ``TimeoutError`` means the stream did not produce its first valid frame
+        before ``timeout`` expired.
+        """
+        deadline = None if timeout is None else time.monotonic() + timeout
+        with self._condition:
+            while self._latest_frame is None:
+                self._raise_if_unavailable()
+                remaining = None if deadline is None else deadline - time.monotonic()
+                if remaining is not None and remaining <= 0:
+                    raise TimeoutError(f"timed out warming up {self.topic}")
+                self._condition.wait(remaining)
+            return self._latest_frame
 
     def wait_for_state(self, state: str, timeout: float | None = None) -> bool:
         """Wait until the server reports ``state``; return ``False`` on timeout."""
@@ -133,9 +162,9 @@ class CameraStream:
 
     @property
     def last_frame(self) -> Frame | None:
-        """The newest frame without consuming it, or ``None`` before first receipt."""
+        """The most recently received frame, or ``None`` before first receipt."""
         with self._condition:
-            return self._frame
+            return self._latest_frame
 
     @property
     def is_closed(self) -> bool:
@@ -218,6 +247,7 @@ class CameraStream:
             self._last_received_ns = received_monotonic_ns
             self._received_frames += 1
             self._frame = frame
+            self._latest_frame = frame
             self._condition.notify_all()
 
     def _apply_status(self, status: dict[str, Any]) -> None:
@@ -273,10 +303,25 @@ class StreamClient:
         self._thread.start()
         self._ready.wait(timeout=1.0)
 
-    def subscribe(self, topic: str) -> CameraStream:
-        """Subscribe to a ``<camera>/color`` topic and return its stream object."""
+    def subscribe(
+        self,
+        topic: str,
+        *,
+        warm_up: bool = True,
+        warm_up_timeout: float | None = None,
+    ) -> CameraStream:
+        """Subscribe to a topic and, by default, wait for its first frame.
+
+        A successful default call guarantees that ``read(block=False)`` returns
+        a frame. Set ``warm_up=False`` to return immediately, or provide
+        ``warm_up_timeout`` to bound startup wait time.
+        """
         if not _TOPIC.fullmatch(topic):
             raise ValueError("topic must have the form '<camera>/color'")
+        if not isinstance(warm_up, bool):
+            raise TypeError("warm_up must be a bool")
+        if warm_up_timeout is not None and warm_up_timeout < 0:
+            raise ValueError("warm_up_timeout must be non-negative")
         with self._lock:
             self._raise_if_closed()
             stream = self._streams.get(topic)
@@ -284,7 +329,9 @@ class StreamClient:
                 stream = CameraStream(self, topic)
                 self._streams[topic] = stream
                 self._commands.put(("subscribe", topic))
-            return stream
+        if warm_up:
+            stream.warm_up(timeout=warm_up_timeout)
+        return stream
 
     def unsubscribe(self, topic: str) -> None:
         """Stop one topic subscription; silently accept an already absent topic."""

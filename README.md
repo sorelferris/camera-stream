@@ -1,7 +1,16 @@
 # camera-stream
 
+<p align="center">
+  <img alt="Python 3.10" src="https://img.shields.io/badge/Python-3.10-3776AB?logo=python&logoColor=white">
+  <img alt="Linux" src="https://img.shields.io/badge/platform-Linux-FCC624?logo=linux&logoColor=black">
+  <img alt="ZeroMQ PUB SUB" src="https://img.shields.io/badge/transport-ZeroMQ%20PUB%2FSUB-DF5C32">
+  <img alt="Real time first" src="https://img.shields.io/badge/policy-latest--frame--wins-16A34A">
+</p>
+
+<p align="center"><strong>Low-latency, multi-camera image broadcast for trusted Linux networks.</strong></p>
+
 > [!TIP]
-> ## camera-stream | Project Card
+> ## 📹 camera-stream | Project Card
 >
 > **camera-stream** is a lightweight Linux multi-camera streaming service. It
 > broadcasts local camera images over ZeroMQ for trusted internal networks,
@@ -10,28 +19,47 @@
 >
 > | Core capability | Design |
 > | --- | --- |
-> | Device support | V4L2/OpenCV cameras, Intel RealSense, and Orbbec cameras |
-> | Low-latency broadcast | One-to-many ZeroMQ PUB/SUB with independently subscribable camera topics |
-> | Real-time policy | Capacity-one, latest-frame-wins stages discard stale frames instead of accumulating latency |
-> | Image format | Per-camera JPEG for lower bandwidth, or lossless `raw_bgr8` output |
-> | On-demand operation | Topic-demand idle sleep/wake stops unused camera capture and encoding |
-> | Operations | Status events and periodic snapshots on the stream endpoint, plus an optional Rich monitoring dashboard |
+> | 📷 Device support | V4L2/OpenCV cameras, Intel RealSense, and Orbbec cameras |
+> | 📡 Low-latency broadcast | One-to-many ZeroMQ PUB/SUB with independently subscribable camera topics |
+> | ⚡ Real-time policy | Capacity-one, latest-frame-wins stages discard stale frames instead of accumulating latency |
+> | 🖼️ Image format | Per-camera JPEG for lower bandwidth, or lossless `raw_bgr8` output |
+> | 💤 On-demand operation | Topic-demand idle sleep/wake stops unused camera capture and encoding |
+> | 📊 Operations | Status events and periodic snapshots on the stream endpoint, plus an optional Rich monitoring dashboard |
 >
-> **Best suited to:** real-time robotic perception, multi-camera intranet
+> **🎯 Best suited to:** real-time robotic perception, multi-camera intranet
 > distribution, and shared image sources for multiple algorithm nodes. It is a
 > live-streaming service, not a recording or replay system.
 
-Chinese documentation: [README.zh.md](README.zh.md)
+**Docs:** [English](README.md) · [简体中文](README.zh.md)
 
-Linux service for publishing multiple local cameras over ZeroMQ with a
-latest-frame-wins policy.
+```mermaid
+flowchart LR
+    A[📷 Local cameras] --> B[⚙️ camera-stream]
+    B --> C[📡 ZeroMQ PUB/SUB]
+    C --> D[🖥️ Visual client]
+    C --> E[🧠 Vision applications]
+    B -. "status/" .-> F[🔎 Topic diagnostics]
+    classDef source fill:#e8f4ea,stroke:#2f7d45,color:#173b21
+    classDef server fill:#e8f0fb,stroke:#3d6ea8,color:#1c3554
+    classDef consumer fill:#fff4df,stroke:#b47720,color:#4c3210
+    class A source
+    class B,C server
+    class D,E,F consumer
+```
 
-## Quick Start
+| Start here | Command | What it gives you |
+| --- | --- | --- |
+| 🖥️ Publish cameras | `uvx camera-stream --config ./config.yaml` | Server and optional Rich TUI |
+| 👀 Inspect live video | `uvx --from camera-stream client --endpoint tcp://HOST:5555` | Graphical multi-camera monitor |
+| 🔎 Diagnose streams | `uvx camera-stream topic list --endpoint tcp://HOST:5555` | Topics, status, FPS, and bandwidth |
+| 🧩 Embed in Python | `from camera_stream import StreamClient` | Decoded latest-frame client API |
+
+## 🚀 Quick Start
 
 `uvx` is Python/uv's equivalent of `npx`: it downloads a PyPI package into an
 isolated cached environment and runs its command without a manual install.
 
-### 1. Run a server with `uvx`
+### 1. 📡 Run a server with `uvx`
 
 Start an OpenCV/V4L2 deployment without cloning this repository:
 
@@ -53,18 +81,18 @@ uvx --from 'camera-stream[realsense,orbbec]' \
 current directory and refuses to overwrite an existing file. Adapt device
 paths, serial numbers, encoding, endpoints, and idle policy before starting.
 
-### 2. View every camera with `uvx`
+### 2. 👀 View every camera with `uvx`
 
 The graphical client discovers configured cameras and displays all color
 streams with live diagnostics:
 
 ```bash
-uvx --from camera-stream camera-stream-client --endpoint tcp://192.168.5.24:5555
+uvx --from camera-stream client --endpoint tcp://192.168.5.24:5555
 ```
 
 Use the server's reachable IP address, not its bind address `0.0.0.0`.
 
-### 3. Inspect topics with `uvx`
+### 3. 🔎 Inspect topics with `uvx`
 
 The package also provides ROS-like read-only diagnostics. These commands
 need no repository checkout and connect only to the public stream endpoint:
@@ -85,13 +113,13 @@ that camera under idle policy. `hz` reports received-frame rate and `bw`
 reports encoded image payload Mbps. Pass `--count N` for a bounded run;
 `hz` and `bw` also accept `--window SECONDS`.
 
-## Integrate a Client
+## 🧩 Integrate a Client
 
 The endpoints in `config.yaml` are server bind addresses. A remote client must
 replace `0.0.0.0` with the server's reachable IP address. With the bundled
 configuration, use `tcp://192.168.5.24:5555` for frames and status.
 
-### Use the client package
+### 🐍 Use the client package
 
 For applications that need decoded frames without managing ZeroMQ sockets,
 use the `camera-stream` package's latest-frame-wins interface:
@@ -100,6 +128,7 @@ use the `camera-stream` package's latest-frame-wins interface:
 from camera_stream import StreamClient
 
 with StreamClient("tcp://192.168.5.24:5555") as client:
+    # subscribe() waits for the first decoded frame by default.
     camera = client.subscribe("base_camera/color")
     camera.wait_for_state("ONLINE", timeout=5)
     while True:
@@ -108,11 +137,21 @@ with StreamClient("tcp://192.168.5.24:5555") as client:
         print(frame.sequence, frame.age_ms, camera.metrics["average_fps"])
 ```
 
-`read()` returns the newest available frame and discards older unread frames.
-`latest()` returns immediately, while `state`, `error`, `status`, `metrics`,
-and `wait_for_state()` expose server and local receive diagnostics.
+`read()` returns the newest unread frame and discards older unread frames.
+Use `read(block=False)` for a non-blocking snapshot of the most recently
+received frame; it is equivalent to `latest()` and returns `None` only before
+the first frame arrives. `read(timeout=N)` waits up to `N` seconds and raises
+`TimeoutError` on expiry. `latest()` and `last_frame` do not consume the frame,
+so they continue to return it until a newer one arrives. `state`, `error`, `status`, `metrics`, and
+`wait_for_state()` expose server and local receive diagnostics.
 
-### Discover camera topics and status
+`subscribe()` warms up a new stream by default: it returns only after a valid
+first frame arrives, so `read(block=False)` is immediately usable. Pass
+`warm_up_timeout=N` to bound that wait, or `warm_up=False` to return before a
+frame is available. `camera.warm_up(timeout=N)` provides the same wait for an
+existing stream.
+
+### 📬 Discover camera topics and status
 
 Status and frames use the same `stream_pub` endpoint. Subscribe to `status/`
 to receive an immediate full snapshot when the subscription becomes active,
@@ -152,7 +191,7 @@ client metadata as well as all per-camera metrics. State events use
 `status/camera/<camera-name>` and have `type: "camera_state"`; snapshots use
 `status/snapshot` and have `type: "snapshot"`.
 
-### Subscribe to a camera stream
+### 🖼️ Subscribe to a camera stream
 
 Each color stream is published under `<camera-name>/color`. The subscriber
 below reads only `base_camera`; its high-water mark of one preserves the
@@ -196,10 +235,10 @@ finally:
 To receive every camera topic, subscribe with `b""` instead. That also receives
 two-part `status/camera/<camera-name>` events and `status/snapshot`, so check
 the multipart length before treating a message as a three-part image frame. The
-same `camera-stream` package provides the visual client through the
-`camera-stream-client` command.
+same `camera-stream` package provides the visual client through the `client`
+command.
 
-### Idle camera policy
+### 💤 Idle camera policy
 
 `config.yaml` enables the following policy by default:
 
@@ -224,7 +263,7 @@ still-running worker resumes its previous state, usually `ONLINE`, without
 reopening the camera. Set `enabled: false` for continuous capture and the
 lowest first-frame latency.
 
-## Run from a Checkout
+## 🛠️ Run from a Checkout
 
 Install the drivers used by `config.yaml`, then run the service:
 
@@ -236,11 +275,11 @@ uv run camera-stream --config config.yaml
 Run the local client source with the workspace command:
 
 ```bash
-uv run camera-stream-client \
+uv run client \
   --endpoint=tcp://127.0.0.1:5555
 ```
 
-`uv run camera-stream-client` uses the current checkout source.
+`uv run client` uses the current checkout source.
 
 Use the bundled V4L2 demo and the in-process server TUI when developing:
 
@@ -251,7 +290,7 @@ uv run camera-stream --config config.demo.yaml --tui
 `--tui` renders the Rich server dashboard in the same process. Without it, the
 service remains headless and suitable for systemd.
 
-## systemd Deployment
+## ⚙️ systemd Deployment
 
 Synchronize the environment with required camera drivers, then install and
 start the service:
@@ -274,7 +313,7 @@ journalctl -u camera-stream.service -f
 Use `--user robot`, `--unit-name NAME`, or `--no-start` as needed. Rerun the
 installer after moving the checkout or configuration.
 
-## Publish the Package
+## 📦 Publish the Package
 
 ```bash
 scripts/publish_camera_stream.sh
@@ -286,7 +325,7 @@ scripts/publish_camera_stream.sh --publish
 Use `--testpypi --publish` with a TestPyPI token before production. The script
 rejects a dirty worktree unless `--allow-dirty` is explicitly set.
 
-## Architecture
+## 🏗️ Architecture
 
 The server is one `camera-stream` process with two logical data-plane stages:
 the Supervisor aggregates frames from spawned camera workers, then the Service
@@ -337,7 +376,7 @@ flowchart LR
     class ClientA,ClientB client
 ```
 
-### Data-flow guarantees
+### ⚡ Data-flow guarantees
 
 - Every frame path is bounded: the capture slot, IPC PUSH/PULL and XPUB socket
   use capacity-one behavior, so old frames are dropped instead of queued.
@@ -355,7 +394,7 @@ flowchart LR
   PULL-to-PUB preparation and local PUB enqueue. Client receive/decode latency
   and actual client-side drops are not observable from PUB/SUB alone.
 
-## TUI Dashboard
+## 📊 TUI Dashboard
 
 Run `camera-stream --config config.yaml --tui` to render the following
 in-process topology view. Nodes are vertically centered against their adjacent
@@ -403,7 +442,7 @@ flowchart LR
     class Client1,Client2 client
 ```
 
-### Panel fields
+### 🧾 Panel fields
 
 - **Camera**: state, driver/profile, capture FPS, end-to-end capture-to-PUB
   latency, IPC encode/send cost and drop counters. With idle policy enabled,
@@ -430,7 +469,7 @@ flowchart LR
 Topics are `<camera-name>/color`. The header declares `schema_version`,
 `sequence`, capture timestamps, dimensions, pixel format and codec.
 
-### Frame header reference
+### 🧬 Frame header reference
 
 The second ZeroMQ message part is UTF-8 JSON. For example:
 

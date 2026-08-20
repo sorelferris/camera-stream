@@ -135,7 +135,7 @@ def test_unified_distribution_exposes_server_and_client_cli_names() -> None:
 
     assert 'name = "camera-stream"' in document
     assert 'camera-stream = "camera_stream.streamer:main"' in document
-    assert 'camera-stream-client = "camera_stream.client.cli:main"' in document
+    assert 'client = "camera_stream.client.cli:main"' in document
 
 
 def test_download_template_writes_once_without_overwriting(

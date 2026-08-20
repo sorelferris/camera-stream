@@ -1,9 +1,18 @@
 # camera-stream
 
-[English](README.md)
+<p align="center">
+  <img alt="Python 3.10" src="https://img.shields.io/badge/Python-3.10-3776AB?logo=python&logoColor=white">
+  <img alt="Linux" src="https://img.shields.io/badge/platform-Linux-FCC624?logo=linux&logoColor=black">
+  <img alt="ZeroMQ PUB SUB" src="https://img.shields.io/badge/transport-ZeroMQ%20PUB%2FSUB-DF5C32">
+  <img alt="实时优先" src="https://img.shields.io/badge/policy-%E6%9C%80%E6%96%B0%E5%B8%A7%E4%BC%98%E5%85%88-16A34A">
+</p>
+
+<p align="center"><strong>面向可信 Linux 内网的低延迟多路相机画面广播服务。</strong></p>
+
+**文档：** [English](README.md) · [简体中文](README.zh.md)
 
 > [!TIP]
-> ## camera-stream | 极简项目卡片
+> ## 📹 camera-stream | 极简项目卡片
 >
 > **camera-stream** 是一款运行于 Linux 的轻量化多路相机推流服务。它基于
 > ZeroMQ 在可信内网中广播本地相机画面，面向实时优先的机器视觉与机器人工作负载：
@@ -11,25 +20,44 @@
 >
 > | 核心能力 | 设计 |
 > | --- | --- |
-> | 设备支持 | V4L2/OpenCV 通用相机、Intel RealSense 与 Orbbec 相机 |
-> | 低延迟广播 | 一对多 ZeroMQ PUB/SUB，每台相机拥有可独立订阅的主题 |
-> | 实时策略 | 全链路容量为一、弃旧留新，不让陈旧帧堆积为延迟 |
-> | 图像格式 | 每台相机可选低带宽 JPEG，或无损 `raw_bgr8` 原始输出 |
-> | 按需运行 | 根据主题订阅需求让空闲相机休眠/唤醒，停止不需要的采集和编码 |
-> | 运维能力 | 同一推流端点上的状态事件与周期快照，以及可选 Rich 监控仪表盘 |
+> | 📷 设备支持 | V4L2/OpenCV 通用相机、Intel RealSense 与 Orbbec 相机 |
+> | 📡 低延迟广播 | 一对多 ZeroMQ PUB/SUB，每台相机拥有可独立订阅的主题 |
+> | ⚡ 实时策略 | 全链路容量为一、弃旧留新，不让陈旧帧堆积为延迟 |
+> | 🖼️ 图像格式 | 每台相机可选低带宽 JPEG，或无损 `raw_bgr8` 原始输出 |
+> | 💤 按需运行 | 根据主题订阅需求让空闲相机休眠/唤醒，停止不需要的采集和编码 |
+> | 📊 运维能力 | 同一推流端点上的状态事件与周期快照，以及可选 Rich 监控仪表盘 |
 >
-> **适用场景：** 机器人实时视觉感知、内网多路相机分发、多算法节点共享图像源。
+> **🎯 适用场景：** 机器人实时视觉感知、内网多路相机分发、多算法节点共享图像源。
 > 本项目提供实时画面，不提供录制或回放。
 
-面向多路本地相机的 Linux ZeroMQ 推流服务，采用“最新帧优先”策略，支持
-OpenCV/V4L2、Intel RealSense 和 Orbbec 彩色相机。
+```mermaid
+flowchart LR
+    A[📷 本地相机] --> B[⚙️ camera-stream]
+    B --> C[📡 ZeroMQ PUB/SUB]
+    C --> D[🖥️ 图形客户端]
+    C --> E[🧠 视觉算法]
+    B -. "status/" .-> F[🔎 Topic 诊断]
+    classDef source fill:#e8f4ea,stroke:#2f7d45,color:#173b21
+    classDef server fill:#e8f0fb,stroke:#3d6ea8,color:#1c3554
+    classDef consumer fill:#fff4df,stroke:#b47720,color:#4c3210
+    class A source
+    class B,C server
+    class D,E,F consumer
+```
 
-## 快速开始
+| 从这里开始 | 命令 | 你将得到 |
+| --- | --- | --- |
+| 🖥️ 发布相机 | `uvx camera-stream --config ./config.yaml` | 服务端与可选 Rich TUI |
+| 👀 查看实时画面 | `uvx --from camera-stream client --endpoint tcp://HOST:5555` | 多相机图形监控工具 |
+| 🔎 诊断流 | `uvx camera-stream topic list --endpoint tcp://HOST:5555` | topic、状态、帧率和带宽信息 |
+| 🧩 Python 接入 | `from camera_stream import StreamClient` | 解码后的最新帧客户端 API |
+
+## 🚀 快速开始
 
 `uvx` 是 Python/uv 中对应 `npx` 的一次性运行方式：它在隔离且可缓存的环境中解析
 PyPI 包并执行命令，无需手动安装。
 
-### 1. 使用 `uvx` 运行服务端
+### 1. 📡 使用 `uvx` 运行服务端
 
 无需克隆仓库，即可启动仅使用 OpenCV/V4L2 的部署：
 
@@ -49,17 +77,17 @@ uvx --from 'camera-stream[realsense,orbbec]' \
 `--download-template` 会在当前目录写入 OpenCV/V4L2 起步配置 `config.yaml`，若目标文件
 已经存在则拒绝覆盖。启动前请修改本机设备路径、序列号、端点、编码和空闲策略。
 
-### 2. 使用 `uvx` 查看全部相机
+### 2. 👀 使用 `uvx` 查看全部相机
 
 图形客户端会自动发现已配置的相机，并显示全部彩色流及实时诊断信息：
 
 ```bash
-uvx --from camera-stream camera-stream-client --endpoint tcp://192.168.5.24:5555
+uvx --from camera-stream client --endpoint tcp://192.168.5.24:5555
 ```
 
 使用服务端实际可达的 IP，而不是绑定地址 `0.0.0.0`。
 
-### 3. 使用 `uvx` 诊断 topic
+### 3. 🔎 使用 `uvx` 诊断 topic
 
 统一包提供类似 ROS 的只读诊断命令。无需检出仓库，只连接公共推流端点：
 
@@ -77,12 +105,12 @@ uvx camera-stream topic bw base_camera/color --endpoint tcp://192.168.5.24:5555
 相机。`hz` 统计收到的帧率，`bw` 统计编码图像载荷的 Mbps。传入 `--count N` 可限制诊断
 帧数；`hz` 和 `bw` 还支持 `--window SECONDS`。
 
-## 自定义客户端接入
+## 🧩 自定义客户端接入
 
 `config.yaml` 中的端点是服务端绑定地址。远端客户端必须将 `0.0.0.0` 替换为服务端可达
 IP。使用随附配置时，图像和状态均使用 `tcp://192.168.5.24:5555`。
 
-### 使用客户端包
+### 🐍 使用客户端包
 
 应用若需要已解码图像，又不希望自行管理 ZeroMQ socket，可使用
 `camera-stream` 提供的最新帧优先接口：
@@ -91,6 +119,7 @@ IP。使用随附配置时，图像和状态均使用 `tcp://192.168.5.24:5555`�
 from camera_stream import StreamClient
 
 with StreamClient("tcp://192.168.5.24:5555") as client:
+    # subscribe() 默认等待第一张已解码画面。
     camera = client.subscribe("base_camera/color")
     camera.wait_for_state("ONLINE", timeout=5)
     while True:
@@ -99,10 +128,17 @@ with StreamClient("tcp://192.168.5.24:5555") as client:
         print(frame.sequence, frame.age_ms, camera.metrics["average_fps"])
 ```
 
-`read()` 返回最新可用帧，并丢弃未读取的旧帧。`latest()` 立即返回；`state`、`error`、
-`status`、`metrics` 和 `wait_for_state()` 则提供服务端状态和本地接收诊断。
+`read()` 返回最新未读帧，并丢弃未读取的旧帧。`read(block=False)` 为非阻塞快照读取，行为
+等同于 `latest()`，只会在首帧到达前返回 `None`；`read(timeout=N)` 最多等待 `N` 秒，超时
+抛出 `TimeoutError`。`latest()` 和 `last_frame` 查看最近一次接收的帧且不消费它，因此会
+持续返回该帧，直到新帧到达。`state`、
+`error`、`status`、`metrics` 和 `wait_for_state()` 则提供服务端状态和本地接收诊断。
 
-### 发现相机 topic 与状态
+`subscribe()` 默认预热新流：只有收到有效首帧后才返回，因此可立即调用
+`read(block=False)`。传入 `warm_up_timeout=N` 可限制等待时间；传入 `warm_up=False`
+则在首帧到达前立即返回。`camera.warm_up(timeout=N)` 可为已有订阅执行同样等待。
+
+### 📬 发现相机 topic 与状态
 
 状态与图像复用同一个 `stream_pub` 端点。`status/` 订阅生效后会立即收到完整快照，随后可
 收到即时的单相机状态事件及每秒一次的完整快照。两者均为尽力而为的 PUB/SUB 消息：晚连接
@@ -139,7 +175,7 @@ finally:
 使用 `status/camera/<camera-name>` 主题，且 `type` 为 `"camera_state"`；快照使用
 `status/snapshot`，且 `type` 为 `"snapshot"`。
 
-### 订阅相机流
+### 🖼️ 订阅相机流
 
 每个彩色流发布在 `<camera-name>/color` 主题下。下面的订阅者只读取 `base_camera`；
 高水位线设为一，因此客户端也保持最新帧优先策略。
@@ -181,9 +217,9 @@ finally:
 
 若需订阅所有相机主题，请订阅 `b""`。这也会收到两段式的
 `status/camera/<camera-name>` 事件和 `status/snapshot`，因此在将消息视作三段式图像帧前，
-需要检查消息段数。统一 `camera-stream` 包提供 `camera-stream-client` 图形调试命令。
+需要检查消息段数。统一 `camera-stream` 包提供 `client` 图形调试命令。
 
-### 空闲相机策略
+### 💤 空闲相机策略
 
 `config.yaml` 默认启用以下策略：
 
@@ -205,7 +241,7 @@ idle_policy:
 仍存活的 worker 会直接恢复到此前状态，通常为 `ONLINE`，不重新打开相机。将 `enabled`
 设为 `false` 可保持持续采集，获得最低的首帧延迟。
 
-## 从检出目录运行
+## 🛠️ 从检出目录运行
 
 安装 `config.yaml` 中所用相机的驱动依赖后启动服务：
 
@@ -217,11 +253,11 @@ uv run camera-stream --config config.yaml
 从工作区运行本地客户端：
 
 ```bash
-uv run camera-stream-client \
+uv run client \
   --endpoint=tcp://127.0.0.1:5555
 ```
 
-`uv run camera-stream-client` 使用当前检出目录的源码。
+`uv run client` 使用当前检出目录的源码。
 
 本机若有三台可用的 V4L2 设备，可使用示例配置开发和查看服务端 TUI：
 
@@ -232,7 +268,7 @@ uv run camera-stream --config config.demo.yaml --tui
 `--tui` 在同一个服务端进程中显示 Rich 仪表盘。它直接读取进程内状态，不创建 ZeroMQ
 客户端。未传入该参数时，服务保持无界面模式，适合 systemd 部署。
 
-## systemd 部署
+## ⚙️ systemd 部署
 
 先按所选配置同步相机驱动依赖，再安装并启动系统服务：
 
@@ -253,7 +289,7 @@ journalctl -u camera-stream.service -f
 可通过 `--user robot` 指定其他运行账户，使用 `--unit-name NAME` 指定其他单元名称，
 使用 `--no-start` 只安装而不启动。移动检出目录或修改配置路径后，应重新运行安装脚本。
 
-## 发布统一包
+## 📦 发布统一包
 
 ```bash
 scripts/publish_camera_stream.sh
@@ -265,7 +301,7 @@ scripts/publish_camera_stream.sh --publish
 正式发布前可用 TestPyPI token 执行 `--testpypi --publish`。除非显式传入
 `--allow-dirty`，脚本会拒绝在脏工作区中发布。
 
-## 架构
+## 🏗️ 架构
 
 服务端是单个 `camera-stream` 进程，包含两个逻辑数据平面阶段：Supervisor 聚合由
 `spawn` 启动的相机 worker 的帧，随后 Service 发布实时流并提供状态。TUI 读取同一个
@@ -306,7 +342,7 @@ flowchart LR
     Service --> ClientB
 ```
 
-### 数据流保证
+### ⚡ 数据流保证
 
 - 每个帧路径均有上界：采集槽、IPC PUSH/PULL 与 XPUB socket 都采用容量为一的行为，
   因此会丢弃旧帧而不会排队。
@@ -319,7 +355,7 @@ flowchart LR
 - 仪表盘的 `cost` 均为处理耗时：相机读取、Supervisor 从 PULL 收到帧到准备 PUB 转发、
   以及本地 PUB 入队。仅靠 PUB/SUB 无法观测客户端接收/解码延迟或实际客户端丢帧。
 
-## TUI 仪表盘
+## 📊 TUI 仪表盘
 
 运行 `camera-stream --config config.yaml --tui` 可以显示进程内拓扑视图。节点相对于相邻
 节点栈垂直居中；每个箭头依次标记协议、方向和传输形式。
@@ -351,7 +387,7 @@ flowchart LR
     end
 ```
 
-### 面板字段
+### 🧾 面板字段
 
 - **Camera**：状态、驱动/配置、采集 FPS、从采集到 PUB 的端到端延迟、IPC 编码/发送
   耗时及丢帧计数。启用空闲策略后，`IDLE_PENDING`、`SLEEPING` 和 `WAKING` 表示按
@@ -372,7 +408,7 @@ flowchart LR
 主题为 `<camera-name>/color`。帧头声明 `schema_version`、`sequence`、采集时间戳、
 图像尺寸、像素格式和编码格式。
 
-### 帧头参考
+### 🧬 帧头参考
 
 第二个 ZeroMQ 消息段是 UTF-8 JSON。例如：
 

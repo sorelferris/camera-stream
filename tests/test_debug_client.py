@@ -7,7 +7,7 @@ import pytest
 import zmq
 
 from camera_stream.client.cli import parse_args
-from camera_stream.client.client import CameraStream
+from camera_stream.client.client import CameraStream, Frame, StreamClient
 from camera_stream.client.dashboard import VideoWall
 from camera_stream.client.protocol import (
     FrameMessage,
@@ -242,15 +242,63 @@ def test_public_camera_stream_keeps_only_the_newest_frame() -> None:
 
     camera._receive(first)
     camera._receive(third)
-    frame = camera.read(timeout=0)
+    latest = camera.latest()
+    assert latest is not None
+    assert latest.sequence == 3
+    assert camera.last_frame is latest
 
+    frame = camera.read(block=False)
+
+    assert frame is latest
     assert frame.sequence == 3
     assert frame.image.tolist() == [[[4, 5, 6]]]
-    assert camera.latest() is None
+    assert camera.read(block=False) is frame
+    assert camera.read(timeout=0).sequence == 3
+    assert camera.read(block=False) is frame
+    assert camera.latest() is frame
     assert camera.metrics["dropped_frames"] == 2
     assert camera.metrics["local_dropped_frames"] == 1
     assert camera.metrics["sequence_gap_frames"] == 1
     assert camera.metrics["drop_rate"] == pytest.approx(2 / 3)
+
+
+def test_public_camera_stream_rejects_nonblocking_timeout() -> None:
+    camera = CameraStream(_ClientStub(), "front/color")  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError, match="block=True"):
+        camera.read(block=False, timeout=0)
+
+
+def test_camera_stream_warm_up_retains_its_first_frame() -> None:
+    camera = CameraStream(_ClientStub(), "front/color")  # type: ignore[arg-type]
+    first = parse_message([b"front/color", _header(), b"\x01\x02\x03"])
+    assert isinstance(first, FrameMessage)
+
+    camera._receive(first)
+    frame = camera.warm_up(timeout=0)
+
+    assert frame.sequence == 1
+    assert camera.read(block=False) is frame
+
+
+def test_stream_client_subscribe_warms_up_by_default(monkeypatch) -> None:
+    calls: list[float | None] = []
+
+    def warm_up(self: CameraStream, timeout: float | None = None) -> Frame:
+        calls.append(timeout)
+        return Frame(
+            image=np.zeros((1, 1, 3), dtype=np.uint8),
+            header={},
+            received_monotonic_ns=0,
+            received_utc_ns=0,
+        )
+
+    monkeypatch.setattr(CameraStream, "warm_up", warm_up)
+    with StreamClient("tcp://127.0.0.1:1") as client:
+        client.subscribe("front/color", warm_up_timeout=0.5)
+        client.subscribe("side/color", warm_up=False)
+
+    assert calls == [0.5]
 
 
 def test_public_camera_stream_status_wait_and_close() -> None:

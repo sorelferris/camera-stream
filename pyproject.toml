@@ -16,7 +16,7 @@ dependencies = [
 
 [project.scripts]
 camera-stream = "camera_stream.streamer:main"
-camera-stream-client = "camera_stream.client.cli:main"
+client = "camera_stream.client.cli:main"
 
 [project.optional-dependencies]
 realsense = ["pyrealsense2>=2.58.3.10794"]
