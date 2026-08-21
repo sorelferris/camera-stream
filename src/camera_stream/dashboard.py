@@ -37,6 +37,9 @@ class Dashboard:
     def render(self) -> RenderableType:
         snapshot = self.supervisor.status_snapshot()
         statuses = {item["name"]: item for item in snapshot["cameras"]}
+        remote_streams = [
+            item for item in snapshot["cameras"] if item.get("source") == "remote"
+        ]
         service = snapshot.get("service", {})
         clients = snapshot.get("clients", [])
 
@@ -51,8 +54,8 @@ class Dashboard:
             topology.add_column()
 
         row: list[RenderableType] = [
-            Align(self._camera_nodes(statuses), vertical="middle"),
-            self._arrow("IPC", " PUSH / PULL "),
+            Align(self._source_nodes(statuses, remote_streams), vertical="middle"),
+            self._source_arrows(remote_streams),
             Align(self._supervisor_node(service), vertical="middle"),
             self._arrow("ZeroMQ", "XPUB / SUB"),
             Align(self._service_node(service), vertical="middle"),
@@ -86,12 +89,63 @@ class Dashboard:
             vertical="middle",
         )
 
+    def _source_arrows(self, remote_streams: list[dict[str, Any]]) -> RenderableType:
+        arrows: list[RenderableType] = [self._arrow("IPC", " PUSH / PULL ")]
+        if remote_streams:
+            arrows.append(self._arrow("INGEST", "ROUTER / DEALER"))
+        return Group(*arrows)
+
+    def _source_nodes(
+        self, statuses: dict[str, dict[str, Any]], remote_streams: list[dict[str, Any]]
+    ) -> RenderableType:
+        nodes: list[RenderableType] = [self._camera_nodes(statuses)]
+        if remote_streams:
+            nodes.extend(
+                [self._remote_stream_node(stream) for stream in remote_streams]
+            )
+        return Group(*nodes)
+
     def _camera_nodes(self, statuses: dict[str, dict[str, Any]]) -> RenderableType:
         return Group(
             *[
                 self._camera_node(camera, statuses[camera.name])
                 for camera in self.supervisor.config.cameras
             ]
+        )
+
+    def _remote_stream_node(self, stream: dict[str, Any]) -> Panel:
+        details = Text()
+        details.append(
+            f"{stream.get('codec', '-').upper()}  "
+            f"{stream.get('width', '-')}x{stream.get('height', '-')}\n",
+            style="dim",
+        )
+        details.append(
+            f"ingest   {self._fps(float(stream.get('received_fps', 0)))}\n",
+            style="green",
+        )
+        details.append(
+            f"age      {self._milliseconds(stream.get('last_frame_age_ms'))}\n",
+            style="cyan",
+        )
+        details.append(
+            f"rate     {self._megabits(stream.get('ingest_bitrate_mbps'))}\n",
+            style="green",
+        )
+        details.append("drops    ", style="dim")
+        details.append(
+            f"limit {stream.get('dropped_rate_limit', 0)}  pub {stream.get('dropped_pub', 0)}",
+            style=self._drop_style(
+                int(stream.get("dropped_rate_limit", 0))
+                + int(stream.get("dropped_pub", 0))
+            ),
+        )
+        return Panel(
+            details,
+            title=f"REMOTE  {stream['topic']}  [{stream['state']}]",
+            subtitle="server ingest",
+            border_style=self._state_style(str(stream["state"])),
+            padding=(0, 1),
         )
 
     def _camera_node(self, camera: Any, status: dict[str, Any]) -> Panel:
@@ -153,6 +207,10 @@ class Dashboard:
         details.append(
             f"PUB  {service.get('stream_pub', '-')}\n",
             style="green",
+        )
+        details.append(
+            f"ingest  {service.get('ingest_api', 'disabled')}\n",
+            style="magenta",
         )
         details.append(
             "status  PUB snapshot 1s\n",

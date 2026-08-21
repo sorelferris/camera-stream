@@ -9,7 +9,13 @@ from urllib.parse import urlsplit
 
 import zmq
 
-from .protocol import ProtocolError, StatusEvent, StatusSnapshot, parse_message
+from .protocol import (
+    ProtocolError,
+    StatusEvent,
+    StatusRemoved,
+    StatusSnapshot,
+    parse_message,
+)
 from .state import CameraRegistry
 
 
@@ -109,6 +115,13 @@ class StreamReceiver(threading.Thread):
             if isinstance(message, StatusEvent):
                 self.registry.apply_stream_status(message)
                 continue
+            if isinstance(message, StatusRemoved):
+                self.registry.remove_topic(message.topic)
+                name = message.topic.removesuffix("/color")
+                if name in self._image_subscriptions:
+                    socket.setsockopt(zmq.UNSUBSCRIBE, message.topic.encode())
+                    self._image_subscriptions.discard(name)
+                continue
             if isinstance(message, StatusSnapshot):
                 self.status_store.success(message.snapshot)
                 self.registry.apply_status_snapshot(message.snapshot)
@@ -126,12 +139,15 @@ class StreamReceiver(threading.Thread):
         if not isinstance(cameras, list):
             return
         for status in cameras:
+            topic = status.get("topic") if isinstance(status, dict) else None
             name = status.get("name") if isinstance(status, dict) else None
+            if not isinstance(topic, str) and isinstance(name, str):
+                topic = f"{name}/color"
             if (
-                not isinstance(name, str)
-                or not name
-                or name in self._image_subscriptions
+                not isinstance(topic, str)
+                or not topic.endswith("/color")
+                or topic.removesuffix("/color") in self._image_subscriptions
             ):
                 continue
-            image_socket.setsockopt(zmq.SUBSCRIBE, f"{name}/color".encode())
-            self._image_subscriptions.add(name)
+            image_socket.setsockopt(zmq.SUBSCRIBE, topic.encode())
+            self._image_subscriptions.add(topic.removesuffix("/color"))

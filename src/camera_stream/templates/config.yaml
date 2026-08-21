@@ -7,6 +7,20 @@
 
 endpoints:
   stream_pub: "tcp://0.0.0.0:5555"
+  # Optional private ingest endpoint for `camera-stream push` hosts.
+  ingest_api: "tcp://0.0.0.0:5557"
+
+# Server-side remote ingest limits. `token` is optional; when omitted, the
+# trusted LAN endpoint accepts pushes without application-level authentication.
+ingest_policy:
+  # token: "replace-with-a-long-random-secret"
+  topic_lease_s: 60
+  max_width: 3840
+  max_height: 2160
+  max_payload_bytes: 16777216
+  max_remote_topics: 64
+  max_connections: 32
+  max_fps: 120
 
 # Stop capture and JPEG encoding after this camera has no stream subscribers
 # for 60 seconds. Set enabled: false for continuous capture.

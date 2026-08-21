@@ -77,6 +77,48 @@ uvx --from 'camera-stream[realsense,orbbec]' \
 `--download-template` 会在当前目录写入 OpenCV/V4L2 起步配置 `config.yaml`，若目标文件
 已经存在则拒绝覆盖。启动前请修改本机设备路径、序列号、端点、编码和空闲策略。
 
+### 1b. 📤 从另一台局域网主机推送相机
+
+在 server 上启用 ingest 端点，并可选地设置共享 token：
+
+```yaml
+endpoints:
+  stream_pub: tcp://0.0.0.0:5555
+  ingest_api: tcp://0.0.0.0:5557
+
+ingest_policy:
+  token: replace-with-a-long-random-secret  # 可信内网可省略
+  topic_lease_s: 60
+```
+
+相机主机使用相同的 `cameras` 配置格式，但只要求 `ingest_api`。首个有效 frame 会原子占用
+`<camera>/color`；若与 server 本地相机同名，本地相机始终优先。
+
+```bash
+uvx camera-stream push --download-template
+# 修改 ./config.yaml：填写可达的 server ingest_api 与本机相机。
+CAMERA_STREAM_INGEST_TOKEN='replace-with-a-long-random-secret' \
+  uvx camera-stream push --config ./config.yaml
+
+uvx camera-stream push --config ./config.yaml --camera front --token "$TOKEN"
+```
+
+push 会隔离各相机、每 topic 只保留一张待发送的已编码图像，并自动重连。remote topic 在连续
+`ingest_policy.topic_lease_s` 未收到有效 frame 后消失。server 不会解码、变换或重新编码推送的图像。
+
+应用自行维护采集循环时，可直接使用同一推流模块；它会隐藏私有 ingest 协议、lease 与重连：
+
+```python
+from camera_stream import StreamPublisher
+
+with StreamPublisher("tcp://192.168.5.24:5557", token=None) as publisher:
+    stream = publisher.open_stream(camera="front", codec="jpeg", jpeg_quality=85)
+    while True:
+        stream.publish(image)  # NumPy BGR 图像；同步编码，网络发送不阻塞
+```
+
+通过 `stream.state`、`stream.error` 与 `stream.metrics` 读取异步 server 反馈和本地丢帧指标。
+
 #### 🪵 无 TUI 日志与 TUI
 
 不带 `--tui` 时，服务会向 stderr 输出精简的生命周期日志：服务启动、worker 创建或恢复、

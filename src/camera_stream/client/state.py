@@ -177,6 +177,11 @@ class CameraRegistry:
             if state is not None:
                 state.apply_server_status(status)
 
+    def remove_topic(self, topic: str) -> None:
+        name = topic.removesuffix("/color")
+        with self._lock:
+            self._states.pop(name, None)
+
     def record_invalid(self, reason: str, camera: str | None = None) -> None:
         if camera:
             state = self._ensure(camera)

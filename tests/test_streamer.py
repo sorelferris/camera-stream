@@ -77,6 +77,15 @@ def test_tui_flag_enables_the_in_process_dashboard() -> None:
     assert args.tui is True
 
 
+def test_push_parser_accepts_camera_selection_and_token() -> None:
+    args = build_parser().parse_args(
+        ["push", "--config", "push.yaml", "--camera", "front", "--token", "secret"]
+    )
+    assert args.command == "push"
+    assert args.camera == ["front"]
+    assert args.token == "secret"
+
+
 def test_tui_logging_suppresses_lifecycle_output() -> None:
     configure_logging(tui=True)
     assert logging.getLogger("camera_stream").level > logging.CRITICAL
@@ -196,3 +205,15 @@ def test_download_template_writes_once_without_overwriting(
     assert load_config(template).cameras[0].name == "camera0"
     assert main(["server", "--download-template"]) == 2
     assert "refusing to overwrite" in capsys.readouterr().err
+
+
+def test_push_download_template_is_role_specific(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    assert main(["push", "--download-template"]) == 0
+    template = tmp_path / "config.yaml"
+    document = template.read_text(encoding="utf-8")
+    assert "ingest_api" in document
+    assert "stream_pub" not in document
+    config = load_config(template)
+    config.require_push_role()

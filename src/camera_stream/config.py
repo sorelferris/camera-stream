@@ -12,12 +12,15 @@ class StrictModel(BaseModel):
 
 
 class EndpointConfig(StrictModel):
-    stream_pub: str
+    stream_pub: str | None = None
+    ingest_api: str | None = None
 
     @model_validator(mode="after")
     def validate_endpoints(self) -> EndpointConfig:
-        if not self.stream_pub.startswith("tcp://"):
-            raise ValueError("stream_pub must use a tcp:// endpoint")
+        for name in ("stream_pub", "ingest_api"):
+            value = getattr(self, name)
+            if value is not None and not value.startswith("tcp://"):
+                raise ValueError(f"{name} must use a tcp:// endpoint")
         return self
 
 
@@ -52,6 +55,19 @@ class IdlePolicyConfig(StrictModel):
     sleep_after_s: float = Field(default=60.0, gt=0, le=86_400)
 
 
+class IngestPolicyConfig(StrictModel):
+    """Server-side limits and ownership lifetime for remote camera push."""
+
+    token: str | None = Field(default=None, min_length=1, max_length=4096)
+    topic_lease_s: float = Field(default=60.0, gt=0, le=86_400)
+    max_width: int = Field(default=3840, gt=0, le=7680)
+    max_height: int = Field(default=2160, gt=0, le=4320)
+    max_payload_bytes: int = Field(default=16_777_216, gt=0, le=128 * 1024 * 1024)
+    max_remote_topics: int = Field(default=64, gt=0, le=1024)
+    max_connections: int = Field(default=32, gt=0, le=1024)
+    max_fps: int = Field(default=120, gt=0, le=1000)
+
+
 class CameraConfig(StrictModel):
     name: str = Field(min_length=1, max_length=80, pattern=r"^[A-Za-z0-9_.-]+$")
     driver: Literal["opencv", "realsense", "orbbec"]
@@ -75,8 +91,9 @@ class CameraConfig(StrictModel):
 
 class ServiceConfig(StrictModel):
     endpoints: EndpointConfig
-    cameras: list[CameraConfig] = Field(min_length=1, max_length=64)
+    cameras: list[CameraConfig] = Field(default_factory=list, max_length=64)
     idle_policy: IdlePolicyConfig = Field(default_factory=IdlePolicyConfig)
+    ingest_policy: IngestPolicyConfig = Field(default_factory=IngestPolicyConfig)
 
     @model_validator(mode="after")
     def validate_names(self) -> ServiceConfig:
@@ -84,6 +101,16 @@ class ServiceConfig(StrictModel):
         if len(names) != len(set(names)):
             raise ValueError("camera names must be unique")
         return self
+
+    def require_server_role(self) -> None:
+        if self.endpoints.stream_pub is None:
+            raise ValueError("server requires endpoints.stream_pub")
+
+    def require_push_role(self) -> None:
+        if self.endpoints.ingest_api is None:
+            raise ValueError("push requires endpoints.ingest_api")
+        if not self.cameras:
+            raise ValueError("push requires at least one camera")
 
 
 def load_config(path: str | Path) -> ServiceConfig:

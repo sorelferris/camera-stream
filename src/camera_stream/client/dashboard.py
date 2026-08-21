@@ -279,7 +279,7 @@ class VideoWall:
         server_state = self._server_state_label(view)
         self._text(
             canvas,
-            f"{view['name']}  {view['local_state']}  {server_state}",
+            f"{view['name']}  {str(view['server'].get('source', 'local')).upper()}  {view['local_state']}  {server_state}",
             (x + 8, y + line),
             scale,
             self._state_color(view["local_state"]),
@@ -331,6 +331,14 @@ class VideoWall:
                         "CAP/IPC",
                         f"{self._ms(server.get('capture_cost_ms'))} / {self._ms(server.get('ipc_cost_ms'))}",
                     ),
+                ],
+                [
+                    ("INGEST", self._fps(server.get("received_fps"))),
+                    (
+                        "IN RATE",
+                        f"{float(server.get('ingest_bitrate_mbps', 0)):.1f} Mbps",
+                    ),
+                    ("LIMIT DROP", str(server.get("dropped_rate_limit", "-"))),
                 ],
             ]
             for index, fields in enumerate(metric_rows[:available_lines]):

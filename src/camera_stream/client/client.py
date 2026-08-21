@@ -16,6 +16,7 @@ from .protocol import (
     FrameMessage,
     ProtocolError,
     StatusEvent,
+    StatusRemoved,
     StatusSnapshot,
     decode_frame,
     parse_message,
@@ -428,19 +429,26 @@ class StreamClient:
             if stream is not None:
                 stream._apply_event(message)
             return
+        if isinstance(message, StatusRemoved):
+            self.unsubscribe(message.topic)
+            return
         if isinstance(message, StatusSnapshot):
             for status in message.snapshot.get("cameras", []):
                 if not isinstance(status, dict) or not isinstance(
                     status.get("name"), str
                 ):
                     continue
-                stream = self._stream_for_camera(status["name"])
+                topic = status.get("topic", f"{status['name']}/color")
+                stream = self._stream_for_topic(topic)
                 if stream is not None:
                     stream._apply_status(status)
 
     def _stream_for_camera(self, name: str) -> CameraStream | None:
+        return self._stream_for_topic(f"{name}/color")
+
+    def _stream_for_topic(self, topic: str) -> CameraStream | None:
         with self._lock:
-            return self._streams.get(f"{name}/color")
+            return self._streams.get(topic)
 
     def _wake_streams(self) -> None:
         with self._lock:

@@ -13,6 +13,7 @@ from camera_stream.client.protocol import (
     FrameMessage,
     ProtocolError,
     StatusEvent,
+    StatusRemoved,
     StatusSnapshot,
     parse_message,
 )
@@ -80,6 +81,18 @@ def test_parse_single_endpoint_status_messages() -> None:
     assert event.camera == "front"
     assert isinstance(snapshot, StatusSnapshot)
     assert snapshot.snapshot["cameras"][0]["name"] == "front"
+
+
+def test_parse_remote_stream_removal_event() -> None:
+    removed = parse_message(
+        [
+            b"status/removed",
+            b'{"type":"stream_removed","topic":"remote/color","source":"remote"}',
+        ]
+    )
+
+    assert isinstance(removed, StatusRemoved)
+    assert removed.topic == "remote/color"
 
 
 def test_registry_tracks_local_overwrite_and_sequence_gap() -> None:

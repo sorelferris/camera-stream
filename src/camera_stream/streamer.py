@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
+import signal
 import sys
 from importlib import resources
 from pathlib import Path
@@ -10,7 +12,9 @@ from camera_stream.client.cli import add_arguments as add_client_arguments
 from camera_stream.client.cli import run as run_client
 from camera_stream.topic import add_topic_subcommands, run_topic_command
 
-TEMPLATE_FILENAME = "config.yaml"
+SERVER_TEMPLATE_FILENAME = "config.yaml"
+PUSH_TEMPLATE_FILENAME = "push-config.yaml"
+OUTPUT_TEMPLATE_FILENAME = "config.yaml"
 
 
 def configure_logging(*, tui: bool = False) -> None:
@@ -41,6 +45,23 @@ def build_parser() -> argparse.ArgumentParser:
         help="write a starter config.yaml into the current directory",
     )
 
+    push = subparsers.add_parser(
+        "push", help="capture local cameras and push to a server"
+    )
+    push.add_argument("--config", type=Path, help="YAML push configuration")
+    push.add_argument(
+        "--download-template",
+        action="store_true",
+        help="write a starter push config.yaml into the current directory",
+    )
+    push.add_argument(
+        "--camera", action="append", default=[], help="push only this configured camera"
+    )
+    push.add_argument(
+        "--token",
+        help="ingest token; defaults to CAMERA_STREAM_INGEST_TOKEN when unset",
+    )
+
     client = subparsers.add_parser("client", help="view camera streams graphically")
     add_client_arguments(client)
 
@@ -48,11 +69,11 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def download_template(destination: Path) -> int:
+def download_template(destination: Path, template_filename: str) -> int:
     """Write the packaged deployment template without overwriting user files."""
     template = (
         resources.files("camera_stream")
-        .joinpath("templates", TEMPLATE_FILENAME)
+        .joinpath("templates", template_filename)
         .read_text(encoding="utf-8")
     )
     try:
@@ -82,12 +103,43 @@ def main(argv: list[str] | None = None) -> int:
         except (TypeError, ValueError) as exc:
             print(f"topic error: {exc}", file=sys.stderr)
             return 2
+    if args.command == "push":
+        if args.download_template:
+            if args.config is not None or args.camera or args.token:
+                parser.error(
+                    "push --download-template cannot be combined with --config, --camera, or --token"
+                )
+            return download_template(
+                Path.cwd() / OUTPUT_TEMPLATE_FILENAME, PUSH_TEMPLATE_FILENAME
+            )
+        if args.config is None:
+            parser.error("push --config is required unless --download-template is used")
+        from camera_stream.config import load_config
+        from camera_stream.push import PushService
+
+        try:
+            config = load_config(args.config)
+            token = args.token or os.environ.get("CAMERA_STREAM_INGEST_TOKEN")
+            service = PushService(config, token=token, cameras=args.camera)
+        # CLI must report every configuration/setup error without a traceback.
+        except Exception as exc:  # noqa: BLE001
+            print(f"push configuration error: {exc}", file=sys.stderr)
+            return 2
+
+        def stop_push(_signum: int, _frame: object) -> None:
+            service.request_stop()
+
+        signal.signal(signal.SIGINT, stop_push)
+        signal.signal(signal.SIGTERM, stop_push)
+        return service.run()
     if args.download_template:
         if args.config is not None or args.tui:
             parser.error(
                 "--download-template cannot be combined with --config or --tui"
             )
-        return download_template(Path.cwd() / TEMPLATE_FILENAME)
+        return download_template(
+            Path.cwd() / OUTPUT_TEMPLATE_FILENAME, SERVER_TEMPLATE_FILENAME
+        )
     if args.config is None:
         parser.error("server --config is required unless --download-template is used")
     # Keep the graphical client importable on Windows without server-only modules.
@@ -96,6 +148,7 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         config = load_config(args.config)
+        config.require_server_role()
     except Exception as exc:  # noqa: BLE001 - CLI must report every config/parser error
         print(f"configuration error: {exc}", file=sys.stderr)
         return 2

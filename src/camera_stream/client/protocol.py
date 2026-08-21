@@ -44,7 +44,14 @@ class StatusSnapshot:
     snapshot: dict[str, Any]
 
 
-def parse_message(parts: list[bytes]) -> FrameMessage | StatusEvent | StatusSnapshot:
+@dataclass(frozen=True)
+class StatusRemoved:
+    topic: str
+
+
+def parse_message(
+    parts: list[bytes],
+) -> FrameMessage | StatusEvent | StatusSnapshot | StatusRemoved:
     """Parse one PUB message without decoding its image payload."""
     if not parts:
         raise ProtocolError("message has no topic")
@@ -58,6 +65,8 @@ def parse_message(parts: list[bytes]) -> FrameMessage | StatusEvent | StatusSnap
             return _parse_status_snapshot(parts[1])
         if topic.startswith("status/camera/"):
             return _parse_status_event(topic, parts[1])
+        if topic == "status/removed":
+            return _parse_status_removed(parts[1])
     if len(parts) != 3:
         raise ProtocolError(f"expected 3 image parts, got {len(parts)}")
 
@@ -119,6 +128,19 @@ def _parse_status_snapshot(payload: bytes) -> StatusSnapshot:
     if not isinstance(snapshot.get("cameras"), list):
         raise ProtocolError("status snapshot has no cameras")
     return StatusSnapshot(snapshot=snapshot)
+
+
+def _parse_status_removed(payload: bytes) -> StatusRemoved:
+    try:
+        event = json.loads(payload.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ProtocolError("status removal is not valid JSON") from exc
+    if not isinstance(event, dict):
+        raise ProtocolError("unsupported status removal")
+    topic = event.get("topic")
+    if event.get("type") != "stream_removed" or not isinstance(topic, str):
+        raise ProtocolError("unsupported status removal")
+    return StatusRemoved(topic=topic)
 
 
 def _validate_frame(topic: str, header: dict[str, Any], payload: bytes) -> None:

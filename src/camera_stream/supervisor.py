@@ -20,6 +20,15 @@ from zmq.utils.monitor import recv_monitor_message
 from camera_stream.config import CameraConfig, ServiceConfig
 from camera_stream.dashboard import Dashboard
 from camera_stream.demand import TopicDemand
+from camera_stream.ingest import (
+    IngestError,
+    RemoteStream,
+    RemoteStreamRegistry,
+    parse_ingest_frame,
+)
+from camera_stream.ingest import (
+    reply as ingest_reply,
+)
 from camera_stream.protocol import json_bytes
 from camera_stream.worker import run_worker
 
@@ -75,6 +84,10 @@ class Supervisor:
         self.stream_pub = self._socket(zmq.XPUB, sndhwm=1)
         self.stream_pub.setsockopt(zmq.XPUB_VERBOSE, 1)
         self.stream_pub.bind(config.endpoints.stream_pub)
+        self.ingest_router: zmq.Socket | None = None
+        if config.endpoints.ingest_api is not None:
+            self.ingest_router = self._socket(zmq.ROUTER, rcvhwm=1, sndhwm=10)
+            self.ingest_router.bind(config.endpoints.ingest_api)
         self.stream_monitor = self.stream_pub.get_monitor_socket(
             zmq.EVENT_ACCEPTED | zmq.EVENT_DISCONNECTED
         )
@@ -85,6 +98,8 @@ class Supervisor:
             self.stream_pub,
         ):
             self.poller.register(socket, zmq.POLLIN)
+        if self.ingest_router is not None:
+            self.poller.register(self.ingest_router, zmq.POLLIN)
         self.poller.register(self.stream_monitor, zmq.POLLIN)
         self.records = {
             camera.name: WorkerRecord(
@@ -99,6 +114,9 @@ class Supervisor:
                 record.status["idle_after_s"] = config.idle_policy.sleep_after_s
         self.clients: dict[int, dict[str, Any]] = {}
         self.topic_demand = TopicDemand([camera.name for camera in config.cameras])
+        self.remote_streams = RemoteStreamRegistry(
+            config.ingest_policy, {f"{name}/color" for name in self.records}
+        )
         logger.info(
             "service configured: stream=%s cameras=%d idle_policy=%s",
             config.endpoints.stream_pub,
@@ -120,7 +138,10 @@ class Supervisor:
     @staticmethod
     def _initial_status(camera: CameraConfig) -> dict[str, Any]:
         return {
+            "id": f"local:{camera.name}",
             "name": camera.name,
+            "topic": f"{camera.name}/color",
+            "source": "local",
             "driver": camera.driver,
             "state": "STARTING",
             "state_since_monotonic_ns": time.monotonic_ns(),
@@ -416,6 +437,107 @@ class Supervisor:
         elif message.get("type") == "error":
             self._set_state(record, "OFFLINE", error=message.get("error"))
 
+    def _handle_ingest(self) -> None:
+        """Accept remote frames without changing the public PUB protocol."""
+        if self.ingest_router is None:
+            return
+        while True:
+            try:
+                parts = self.ingest_router.recv_multipart(flags=zmq.DONTWAIT)
+            except zmq.Again:
+                return
+            if len(parts) < 2:
+                continue
+            identity, message = parts[0], parts[1:]
+            if len(message) == 1:
+                self._handle_ingest_close(identity, message[0])
+                continue
+            try:
+                frame = parse_ingest_frame(message, self.config.ingest_policy)
+                stream, response = self.remote_streams.accept(
+                    identity, frame, time.monotonic_ns()
+                )
+            except IngestError as exc:
+                self._send_ingest_reply(
+                    identity,
+                    ingest_reply(
+                        exc.code,
+                        topic=f"{exc.camera}/color" if exc.camera else None,
+                        error=str(exc),
+                    ),
+                )
+                continue
+            if response is not None:
+                self._send_ingest_reply(identity, response)
+            if stream is not None:
+                if response is not None:
+                    self.status_revision += 1
+                    logger.info("remote stream accepted: topic=%s", stream.topic)
+                    self._publish_status_snapshot(force=True)
+                self._publish_remote_frame(stream, frame.header_bytes, frame.payload)
+
+    def _handle_ingest_close(self, identity: bytes, payload: bytes) -> None:
+        try:
+            message = json.loads(payload.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return
+        if (
+            not isinstance(message, dict)
+            or message.get("type") != "close"
+            or message.get("ingest_schema_version") != 1
+            or not isinstance(message.get("topic"), str)
+        ):
+            return
+        stream = self.remote_streams.close(message["topic"], message.get("lease_token"))
+        if stream is not None:
+            self._remove_remote_stream(stream, "closed")
+
+    def _send_ingest_reply(self, identity: bytes, payload: bytes) -> None:
+        if self.ingest_router is None:
+            return
+        try:
+            self.ingest_router.send_multipart([identity, payload], flags=zmq.DONTWAIT)
+        except zmq.Again:
+            pass
+
+    def _publish_remote_frame(
+        self, stream: RemoteStream, header: bytes, payload: bytes
+    ) -> None:
+        topic = stream.topic.encode()
+        service_started_ns = time.monotonic_ns()
+        try:
+            self.stream_pub.send_multipart([topic, header, payload], flags=zmq.DONTWAIT)
+        except zmq.Again:
+            stream.dropped_pub += 1
+            return
+        now_ns = time.monotonic_ns()
+        self.last_supervisor_cost_ms = 0.0
+        self.last_service_cost_ms = round((now_ns - service_started_ns) / 1_000_000, 2)
+        self.last_published_frame_ns = now_ns
+        self._record_published_bytes(now_ns, len(topic) + len(header) + len(payload))
+
+    def _expire_remote_streams(self) -> None:
+        for stream in self.remote_streams.expire(time.monotonic_ns()):
+            self._remove_remote_stream(stream, "idle_timeout")
+
+    def _remove_remote_stream(self, stream: RemoteStream, reason: str) -> None:
+        self.status_revision += 1
+        event = {
+            "schema_version": 1,
+            "type": "stream_removed",
+            "id": f"remote:{stream.topic}",
+            "topic": stream.topic,
+            "source": "remote",
+            "reason": reason,
+        }
+        try:
+            self.stream_pub.send_multipart(
+                [b"status/removed", json_bytes(event)], flags=zmq.DONTWAIT
+            )
+        except zmq.Again:
+            pass
+        logger.info("remote stream removed: topic=%s reason=%s", stream.topic, reason)
+
     def _publish_frame(self) -> None:
         header, payload = self.frame_pull.recv_multipart()
         received_ns = time.monotonic_ns()
@@ -469,7 +591,8 @@ class Supervisor:
                 "port": client.get("port"),
                 "fd": client["fd"],
                 "endpoint": client["endpoint"],
-                "available_streams": len(self.records),
+                "available_streams": len(self.records)
+                + len(self.remote_streams.streams),
                 "codecs": available_codecs,
                 "connected_s": round(
                     (now_ns - client["connected_monotonic_ns"]) / 1_000_000_000, 1
@@ -502,13 +625,16 @@ class Supervisor:
                     stream_bitrate_mbps * len(self.clients), 2
                 ),
                 "stream_pub": self.config.endpoints.stream_pub,
+                "ingest_api": self.config.endpoints.ingest_api,
+                "remote_stream_count": len(self.remote_streams.streams),
                 "idle_policy": {
                     "enabled": self.config.idle_policy.enabled,
                     "sleep_after_s": self.config.idle_policy.sleep_after_s,
                 },
             },
             "clients": clients,
-            "cameras": [dict(record.status) for record in self.records.values()],
+            "cameras": [dict(record.status) for record in self.records.values()]
+            + self.remote_streams.status(now_ns, time.time_ns()),
         }
 
     def status_snapshot(self) -> dict[str, Any]:
@@ -685,8 +811,11 @@ class Supervisor:
                     self._handle_stream_monitor()
                 if self.stream_pub in events:
                     self._handle_stream_subscriptions()
+                if self.ingest_router is not None and self.ingest_router in events:
+                    self._handle_ingest()
                 self._monitor_workers()
                 self._reconcile_idle_policy()
+                self._expire_remote_streams()
                 self._publish_status_snapshot()
                 self._log_service_summary()
                 if dashboard is not None and dashboard.update():
@@ -713,6 +842,8 @@ class Supervisor:
             self.frame_pull,
         ):
             socket.close(0)
+        if self.ingest_router is not None:
+            self.ingest_router.close(0)
         self.stream_monitor.close(0)
         self.context.term()
         shutil.rmtree(self.runtime_dir, ignore_errors=True)

@@ -81,6 +81,53 @@ uvx --from 'camera-stream[realsense,orbbec]' \
 current directory and refuses to overwrite an existing file. Adapt device
 paths, serial numbers, encoding, endpoints, and idle policy before starting.
 
+### 1b. 📤 Push cameras from another LAN host
+
+Enable the server ingest endpoint and optionally set a shared token:
+
+```yaml
+endpoints:
+  stream_pub: tcp://0.0.0.0:5555
+  ingest_api: tcp://0.0.0.0:5557
+
+ingest_policy:
+  token: replace-with-a-long-random-secret  # optional on a trusted LAN
+  topic_lease_s: 60
+```
+
+On a camera host, use the same camera block format but only `ingest_api` is
+required. The first valid frame atomically claims `<camera>/color`; a local
+server camera always wins a name collision.
+
+```bash
+uvx camera-stream push --download-template
+# Edit ./config.yaml: set the reachable server ingest_api and local camera.
+CAMERA_STREAM_INGEST_TOKEN='replace-with-a-long-random-secret' \
+  uvx camera-stream push --config ./config.yaml
+
+uvx camera-stream push --config ./config.yaml --camera front --token "$TOKEN"
+```
+
+The push command isolates cameras, keeps only one pending encoded frame per
+topic, and reconnects automatically. A remote topic disappears after
+`ingest_policy.topic_lease_s` without a valid frame. The server never decodes,
+transforms, or re-encodes the pushed image payload.
+
+For an application-owned camera loop, use the same publisher module. It hides
+the private ingest protocol, lease, and reconnect lifecycle:
+
+```python
+from camera_stream import StreamPublisher
+
+with StreamPublisher("tcp://192.168.5.24:5557", token=None) as publisher:
+    stream = publisher.open_stream(camera="front", codec="jpeg", jpeg_quality=85)
+    while True:
+        stream.publish(image)  # NumPy BGR image; synchronous encode, nonblocking send
+```
+
+Read `stream.state`, `stream.error`, and `stream.metrics` for asynchronous
+server feedback and local drop measurements.
+
 #### 🪵 Headless logs and TUI
 
 Without `--tui`, the server writes concise lifecycle logs to stderr: service
