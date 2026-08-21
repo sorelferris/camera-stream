@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import multiprocessing as mp
 import os
 import shutil
@@ -27,6 +28,9 @@ BITRATE_WINDOW_NS = 1_000_000_000
 BITRATE_BUCKET_NS = 100_000_000
 BITRATE_BUCKET_COUNT = BITRATE_WINDOW_NS // BITRATE_BUCKET_NS
 STATUS_SNAPSHOT_INTERVAL_NS = 1_000_000_000
+HEADLESS_LOG_INTERVAL_NS = 30_000_000_000
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -54,6 +58,7 @@ class Supervisor:
         self.started_monotonic_ns = time.monotonic_ns()
         self.last_published_frame_ns = 0
         self.last_status_snapshot_ns = 0
+        self.last_headless_log_ns = 0
         self.last_service_cost_ms: float | None = None
         self.last_supervisor_cost_ms: float | None = None
         self.publish_bitrate_buckets: deque[tuple[int, int]] = deque(
@@ -94,6 +99,12 @@ class Supervisor:
                 record.status["idle_after_s"] = config.idle_policy.sleep_after_s
         self.clients: dict[int, dict[str, Any]] = {}
         self.topic_demand = TopicDemand([camera.name for camera in config.cameras])
+        logger.info(
+            "service configured: stream=%s cameras=%d idle_policy=%s",
+            config.endpoints.stream_pub,
+            len(config.cameras),
+            "enabled" if config.idle_policy.enabled else "disabled",
+        )
 
     def _socket(
         self, kind: int, *, rcvhwm: int | None = None, sndhwm: int | None = None
@@ -154,6 +165,24 @@ class Supervisor:
         record.identity = None
         record.status["pid"] = process.pid
         self._set_state(record, state)
+        encoding = record.config.encoding
+        quality = (
+            f" quality={encoding.jpeg_quality}"
+            if encoding.jpeg_quality is not None
+            else ""
+        )
+        logger.info(
+            "worker started: camera=%s driver=%s pid=%s profile=%sx%s@%sfps codec=%s%s state=%s",
+            record.config.name,
+            record.config.driver,
+            process.pid,
+            record.config.profile.width,
+            record.config.profile.height,
+            record.config.profile.fps,
+            encoding.codec,
+            quality,
+            state,
+        )
 
     def _set_state(
         self,
@@ -163,10 +192,8 @@ class Supervisor:
         error: str | None = None,
         attempt: int | None = None,
     ) -> None:
-        changed = (
-            record.status.get("state") != state
-            or record.status.get("last_error") != error
-        )
+        previous_state = record.status.get("state")
+        changed = previous_state != state or record.status.get("last_error") != error
         record.status["state"] = state
         record.status["last_error"] = error
         if attempt is not None:
@@ -194,6 +221,21 @@ class Supervisor:
             except zmq.Again:
                 # The next periodic snapshot lets slow subscribers converge.
                 pass
+            level = {
+                "CONFIG_ERROR": logging.ERROR,
+                "OFFLINE": logging.WARNING,
+                "RECOVERING": logging.WARNING,
+            }.get(state, logging.INFO)
+            detail = f" error={error}" if error else ""
+            logger.log(
+                level,
+                "camera state: camera=%s %s -> %s attempt=%s%s",
+                record.config.name,
+                previous_state or "UNKNOWN",
+                state,
+                record.status.get("reconnect_attempt", 0),
+                detail,
+            )
 
     def _set_worker_state(
         self,
@@ -278,9 +320,15 @@ class Supervisor:
         record.next_restart_at = 0.0
         record.status["last_heartbeat_ns"] = 0
         record.accept_after_monotonic_ns = time.monotonic_ns()
+        logger.info("waking camera worker: camera=%s", record.config.name)
         self._start_worker(record, state="WAKING")
 
     def _sleep_worker(self, record: WorkerRecord) -> None:
+        logger.info(
+            "sleeping idle camera: camera=%s idle_after_s=%s",
+            record.config.name,
+            self.config.idle_policy.sleep_after_s,
+        )
         self._stop_worker(record)
         record.idle_since_monotonic_ns = None
         record.idle_resume_state = None
@@ -525,8 +573,21 @@ class Supervisor:
                     "endpoint": message["endpoint"].decode("utf-8", "replace"),
                     "connected_monotonic_ns": time.monotonic_ns(),
                 }
+                logger.info(
+                    "client connected: ip=%s port=%s endpoint=%s clients=%d",
+                    ip,
+                    port or "?",
+                    message["endpoint"].decode("utf-8", "replace"),
+                    len(self.clients),
+                )
             elif event == zmq.EVENT_DISCONNECTED:
-                self.clients.pop(fd, None)
+                client = self.clients.pop(fd, None)
+                logger.info(
+                    "client disconnected: ip=%s port=%s clients=%d",
+                    client.get("ip", "unknown") if client else "unknown",
+                    client.get("port", "?") if client else "?",
+                    len(self.clients),
+                )
 
     @staticmethod
     def _client_peer(fd: int) -> tuple[str, int | None]:
@@ -603,6 +664,12 @@ class Supervisor:
         self._start_worker(record)
 
     def run(self, *, tui: bool = False) -> None:
+        logger.info(
+            "server started: stream=%s tui=%s cameras=%s",
+            self.config.endpoints.stream_pub,
+            tui,
+            ",".join(self.records),
+        )
         self.start_workers()
         dashboard = Dashboard(self) if tui else None
         try:
@@ -621,6 +688,7 @@ class Supervisor:
                 self._monitor_workers()
                 self._reconcile_idle_policy()
                 self._publish_status_snapshot()
+                self._log_service_summary()
                 if dashboard is not None and dashboard.update():
                     self.stop_requested = True
         finally:
@@ -632,6 +700,11 @@ class Supervisor:
         if self._shutdown_complete:
             return
         self.stop_requested = True
+        logger.info(
+            "server stopping: clients=%d cameras=%d",
+            len(self.clients),
+            len(self.records),
+        )
         for record in self.records.values():
             self._stop_worker(record)
         for socket in (
@@ -644,6 +717,26 @@ class Supervisor:
         self.context.term()
         shutil.rmtree(self.runtime_dir, ignore_errors=True)
         self._shutdown_complete = True
+        logger.info("server stopped")
+
+    def _log_service_summary(self) -> None:
+        """Emit a low-frequency health line for headless/systemd deployments."""
+        now_ns = time.monotonic_ns()
+        if now_ns - self.last_headless_log_ns < HEADLESS_LOG_INTERVAL_NS:
+            return
+        self.last_headless_log_ns = now_ns
+        online = sum(
+            1
+            for record in self.records.values()
+            if record.status.get("state") == "ONLINE"
+        )
+        logger.info(
+            "service health: clients=%d cameras_online=%d/%d bitrate=%.2fMbps",
+            len(self.clients),
+            online,
+            len(self.records),
+            self._stream_bitrate_mbps(now_ns),
+        )
 
 
 def install_signal_handlers(supervisor: Supervisor) -> None:

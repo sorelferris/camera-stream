@@ -13,6 +13,17 @@ from camera_stream.topic import add_topic_subcommands, run_topic_command
 TEMPLATE_FILENAME = "config.yaml"
 
 
+def configure_logging(*, tui: bool = False) -> None:
+    """Keep lifecycle logs useful headlessly without disrupting Rich Live."""
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
+    logging.getLogger("camera_stream").setLevel(
+        logging.CRITICAL + 1 if tui else logging.NOTSET
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Low-latency multi-camera ZeroMQ streaming tools"
@@ -60,11 +71,9 @@ def download_template(destination: Path) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    logging.basicConfig(
-        level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s"
-    )
     parser = build_parser()
     args = parser.parse_args(argv)
+    configure_logging(tui=args.command == "server" and args.tui)
     if args.command == "client":
         return run_client(args)
     if args.command == "topic":

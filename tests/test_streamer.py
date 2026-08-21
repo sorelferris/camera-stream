@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import queue
 import subprocess
 import sys
@@ -10,7 +11,7 @@ from pathlib import Path
 import zmq
 
 from camera_stream.config import load_config
-from camera_stream.streamer import build_parser, main
+from camera_stream.streamer import build_parser, configure_logging, main
 
 
 class Publisher:
@@ -74,6 +75,13 @@ def test_tui_flag_enables_the_in_process_dashboard() -> None:
     args = build_parser().parse_args(["server", "--config", "config.yaml", "--tui"])
     assert args.command == "server"
     assert args.tui is True
+
+
+def test_tui_logging_suppresses_lifecycle_output() -> None:
+    configure_logging(tui=True)
+    assert logging.getLogger("camera_stream").level > logging.CRITICAL
+    configure_logging(tui=False)
+    assert logging.getLogger("camera_stream").level == logging.NOTSET
 
 
 def test_client_parser_accepts_visual_client_options() -> None:

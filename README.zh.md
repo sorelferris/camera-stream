@@ -77,6 +77,23 @@ uvx --from 'camera-stream[realsense,orbbec]' \
 `--download-template` 会在当前目录写入 OpenCV/V4L2 起步配置 `config.yaml`，若目标文件
 已经存在则拒绝覆盖。启动前请修改本机设备路径、序列号、端点、编码和空闲策略。
 
+#### 🪵 无 TUI 日志与 TUI
+
+不带 `--tui` 时，服务会向 stderr 输出精简的生命周期日志：服务启动、worker 创建或恢复、
+相机状态转换、订阅端连接、空闲休眠或唤醒，以及每 30 秒一次的服务健康摘要。为保持实时性，
+不会逐帧记录日志。
+
+```bash
+uvx camera-stream server --config ./config.yaml
+uvx camera-stream server --config ./config.yaml --tui  # Rich 仪表盘
+```
+
+通过 systemd 运行时，可用以下命令持续查看同一份输出：
+
+```bash
+journalctl -fu camera-stream-server
+```
+
 ### 2. 👀 使用 `uvx` 查看全部相机
 
 图形客户端会自动发现已配置的相机，并显示全部彩色流及实时诊断信息：

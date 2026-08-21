@@ -1,4 +1,5 @@
 import json
+import logging
 import socket
 import threading
 import time
@@ -100,6 +101,22 @@ def test_first_capture_updates_status_without_waiting_for_heartbeat() -> None:
         worker.close(0)
         context.term()
         supervisor.shutdown()
+
+
+def test_headless_lifecycle_logs_include_state_and_health(caplog) -> None:
+    with caplog.at_level(logging.INFO, logger="camera_stream.supervisor"):
+        supervisor = Supervisor(service_config())
+        try:
+            supervisor._set_state(supervisor.records["cam"], "ONLINE")
+            supervisor._log_service_summary()
+        finally:
+            supervisor.shutdown()
+
+    assert "service configured: stream=tcp://127.0.0.1:* cameras=1" in caplog.text
+    assert "camera state: camera=cam STARTING -> ONLINE" in caplog.text
+    assert "service health: clients=0 cameras_online=1/1" in caplog.text
+    assert "server stopping: clients=0 cameras=1" in caplog.text
+    assert "server stopped" in caplog.text
 
 
 def test_monitor_restarts_a_worker_stuck_offline(monkeypatch) -> None:

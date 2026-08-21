@@ -81,6 +81,24 @@ uvx --from 'camera-stream[realsense,orbbec]' \
 current directory and refuses to overwrite an existing file. Adapt device
 paths, serial numbers, encoding, endpoints, and idle policy before starting.
 
+#### 🪵 Headless logs and TUI
+
+Without `--tui`, the server writes concise lifecycle logs to stderr: service
+startup, worker spawn/recovery, camera state transitions, subscriber connects,
+idle sleep/wake, and a 30-second health line. Frame-by-frame logging is
+deliberately omitted to preserve real-time performance.
+
+```bash
+uvx camera-stream server --config ./config.yaml
+uvx camera-stream server --config ./config.yaml --tui  # Rich dashboard
+```
+
+For a systemd service, follow the same output with:
+
+```bash
+journalctl -fu camera-stream-server
+```
+
 ### 2. 👀 View every camera with `uvx`
 
 The graphical client discovers configured cameras and displays all color
