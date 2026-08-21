@@ -88,6 +88,67 @@ def test_dashboard_arrow_places_marker_between_labels() -> None:
     )
 
 
+def test_dashboard_centers_each_source_arrow_on_its_own_source_group() -> None:
+    config = ServiceConfig.model_validate(
+        {
+            "endpoints": {"stream_pub": "tcp://127.0.0.1:*"},
+            "cameras": [
+                {
+                    "name": "local",
+                    "driver": "opencv",
+                    "device": {"path": "/dev/video0"},
+                    "profile": {"width": 640, "height": 480, "fps": 30},
+                    "encoding": {"codec": "jpeg", "jpeg_quality": 85},
+                }
+            ],
+        }
+    )
+    supervisor = Supervisor(config)
+    try:
+        snapshot = supervisor.status_snapshot()
+        snapshot["cameras"].append(
+            {
+                "name": "remote",
+                "topic": "remote/color",
+                "source": "remote",
+                "state": "ONLINE",
+                "codec": "jpeg",
+                "width": 640,
+                "height": 480,
+                "received_fps": 30,
+                "last_frame_age_ms": 3,
+                "ingest_bitrate_mbps": 1,
+                "dropped_rate_limit": 0,
+                "dropped_pub": 0,
+            }
+        )
+        supervisor.status_snapshot = lambda: snapshot  # type: ignore[method-assign]
+        output = StringIO()
+        Console(file=output, force_terminal=False, width=220).print(
+            Dashboard(supervisor).render()
+        )
+        lines = output.getvalue().splitlines()
+
+        def line_of(needle: str) -> int:
+            return next(index for index, line in enumerate(lines) if needle in line)
+
+        def center(top: str, bottom: str) -> float:
+            return (line_of(top) + line_of(bottom)) / 2
+
+        assert (
+            abs(center("local  [", "cost - | demand") - center("IPC", "PUSH/PULL")) <= 1
+        )
+        assert (
+            abs(
+                center("REMOTE  remote/color", "server ingest")
+                - center("INGEST", "ROUTER/DEALER")
+            )
+            <= 1
+        )
+    finally:
+        supervisor.shutdown()
+
+
 def test_dashboard_formats_sub_millisecond_costs_with_decimals() -> None:
     assert Dashboard._cost_milliseconds(0.62) == "0.62 ms"
     assert Dashboard._cost_milliseconds(1.0) == "1 ms"

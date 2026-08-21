@@ -45,7 +45,6 @@ class Dashboard:
 
         topology = Table.grid(padding=(0, 0))
         topology.add_column()
-        topology.add_column(width=self._ARROW_COLUMN_WIDTH, justify="center")
         topology.add_column()
         topology.add_column(width=self._ARROW_COLUMN_WIDTH, justify="center")
         topology.add_column()
@@ -54,8 +53,7 @@ class Dashboard:
             topology.add_column()
 
         row: list[RenderableType] = [
-            Align(self._source_nodes(statuses, remote_streams), vertical="middle"),
-            self._source_arrows(remote_streams),
+            self._source_flow(statuses, remote_streams),
             Align(self._supervisor_node(service), vertical="middle"),
             self._arrow("ZeroMQ", "XPUB / SUB"),
             Align(self._service_node(service), vertical="middle"),
@@ -89,21 +87,29 @@ class Dashboard:
             vertical="middle",
         )
 
-    def _source_arrows(self, remote_streams: list[dict[str, Any]]) -> RenderableType:
-        arrows: list[RenderableType] = [self._arrow("IPC", " PUSH / PULL ")]
-        if remote_streams:
-            arrows.append(self._arrow("INGEST", "ROUTER / DEALER"))
-        return Group(*arrows)
-
-    def _source_nodes(
+    def _source_flow(
         self, statuses: dict[str, dict[str, Any]], remote_streams: list[dict[str, Any]]
     ) -> RenderableType:
-        nodes: list[RenderableType] = [self._camera_nodes(statuses)]
-        if remote_streams:
-            nodes.extend(
-                [self._remote_stream_node(stream) for stream in remote_streams]
+        """Render each source group beside its own vertically centered arrow."""
+        sources = Table.grid(padding=(0, 0))
+        sources.add_column()
+        sources.add_column(width=self._ARROW_COLUMN_WIDTH, justify="center")
+        if self.supervisor.config.cameras:
+            sources.add_row(
+                Align(self._camera_nodes(statuses), vertical="middle"),
+                self._arrow("IPC", "PUSH/PULL"),
             )
-        return Group(*nodes)
+        if remote_streams:
+            sources.add_row(
+                Align(self._remote_stream_nodes(remote_streams), vertical="middle"),
+                self._arrow("INGEST", "ROUTER/DEALER"),
+            )
+        return sources
+
+    def _remote_stream_nodes(
+        self, remote_streams: list[dict[str, Any]]
+    ) -> RenderableType:
+        return Group(*[self._remote_stream_node(stream) for stream in remote_streams])
 
     def _camera_nodes(self, statuses: dict[str, dict[str, Any]]) -> RenderableType:
         return Group(
