@@ -140,11 +140,53 @@ def test_dashboard_centers_each_source_arrow_on_its_own_source_group() -> None:
         )
         assert (
             abs(
-                center("REMOTE  remote/color", "server ingest")
+                center("remote/color", "server ingest")
                 - center("INGEST", "ROUTER/DEALER")
             )
             <= 1
         )
+    finally:
+        supervisor.shutdown()
+
+
+def test_dashboard_source_panels_have_a_fixed_width() -> None:
+    config = ServiceConfig.model_validate(
+        {
+            "endpoints": {"stream_pub": "tcp://127.0.0.1:*"},
+            "cameras": [
+                {
+                    "name": "cam",
+                    "driver": "opencv",
+                    "device": {"path": "/dev/video0"},
+                    "profile": {"width": 640, "height": 480, "fps": 30},
+                    "encoding": {"codec": "jpeg", "jpeg_quality": 85},
+                }
+            ],
+        }
+    )
+    supervisor = Supervisor(config)
+    try:
+        dashboard = Dashboard(supervisor)
+        local = dashboard._camera_node(
+            config.cameras[0], supervisor.records["cam"].status
+        )
+        remote = dashboard._remote_stream_node(
+            {
+                "topic": "very-long-remote-camera-topic/color",
+                "state": "ONLINE",
+                "codec": "jpeg",
+                "width": 640,
+                "height": 480,
+                "received_fps": 30,
+                "last_frame_age_ms": 3,
+                "ingest_bitrate_mbps": 1,
+                "dropped_rate_limit": 0,
+                "dropped_pub": 0,
+            }
+        )
+
+        assert local.width == Dashboard._SOURCE_PANEL_WIDTH
+        assert remote.width == Dashboard._SOURCE_PANEL_WIDTH
     finally:
         supervisor.shutdown()
 

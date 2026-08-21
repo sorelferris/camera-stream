@@ -25,6 +25,7 @@ class Dashboard:
     """Rich dashboard rendered from the in-process supervisor state."""
 
     _ARROW_COLUMN_WIDTH = 13
+    _SOURCE_PANEL_WIDTH = 38
 
     def __init__(self, supervisor: Any, *, refresh_per_second: float = 4.0) -> None:
         self.supervisor = supervisor
@@ -148,10 +149,11 @@ class Dashboard:
         )
         return Panel(
             details,
-            title=f"REMOTE  {stream['topic']}  [{stream['state']}]",
+            title=f"{stream['topic']}  [{stream['state']}]",
             subtitle="server ingest",
             border_style=self._state_style(str(stream["state"])),
             padding=(0, 1),
+            width=self._SOURCE_PANEL_WIDTH,
         )
 
     def _camera_node(self, camera: Any, status: dict[str, Any]) -> Panel:
@@ -190,6 +192,7 @@ class Dashboard:
             ),
             border_style=state_style,
             padding=(0, 1),
+            width=self._SOURCE_PANEL_WIDTH,
         )
 
     def _supervisor_node(self, service: dict[str, Any]) -> Panel:
