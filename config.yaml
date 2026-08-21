@@ -1,6 +1,29 @@
+# camera-stream starter configuration
+#
+# This template is valid for one V4L2/OpenCV camera. Replace /dev/video0 with
+# the stable device path for your camera, then duplicate the camera block for
+# additional devices. For RealSense or Orbbec, install the matching uvx extra
+# and use device.serial instead of device.path.
+
 endpoints:
   stream_pub: 'tcp://0.0.0.0:5555'
+  # Optional private ingest endpoint for `camera-stream push` hosts.
+  ingest_api: 'tcp://0.0.0.0:5557'
 
+# Server-side remote ingest limits. `token` is optional; when omitted, the
+# trusted LAN endpoint accepts pushes without application-level authentication.
+ingest_policy:
+  # token: "replace-with-a-long-random-secret"
+  topic_lease_s: 60
+  max_width: 3840
+  max_height: 2160
+  max_payload_bytes: 16777216
+  max_remote_topics: 64
+  max_connections: 32
+  max_fps: 120
+
+# Stop capture and JPEG encoding after this camera has no stream subscribers
+# for 60 seconds. Set enabled: false for continuous capture.
 idle_policy:
   enabled: true
   sleep_after_s: 60
@@ -18,26 +41,26 @@ cameras:
       codec: 'jpeg'
       jpeg_quality: 85
 
-  - name: 'hand_camera'
-    driver: 'opencv'
-    device:
-      path: '/dev/v4l/by-id/usb-Sonix_Technology_Co.__Ltd._Orbbec_DaBai_DCW2_RGB_Camera_CH82C5200YG-video-index0'
-    profile:
-      width: 640
-      height: 480
-      fps: 30
-    encoding:
-      codec: 'jpeg'
-      jpeg_quality: 85
+  # - name: 'hand_camera'
+  #   driver: 'opencv'
+  #   device:
+  #     path: '/dev/v4l/by-id/usb-Sonix_Technology_Co.__Ltd._Orbbec_DaBai_DCW2_RGB_Camera_CH82C5200YG-video-index0'
+  #   profile:
+  #     width: 640
+  #     height: 480
+  #     fps: 30
+  #   encoding:
+  #     codec: 'jpeg'
+  #     jpeg_quality: 85
 
-  - name: 'side_camera'
-    driver: 'opencv'
-    device:
-      path: '/dev/v4l/by-id/usb-SHENZHEN_AONI_ELECTRONIC_CO._LTD_aoni_webcam_A30_20191119001-video-index0'
-    profile:
-      width: 640
-      height: 480
-      fps: 30
-    encoding:
-      codec: 'jpeg'
-      jpeg_quality: 85
+  # - name: 'side_camera'
+  #   driver: 'opencv'
+  #   device:
+  #     path: '/dev/v4l/by-id/usb-SHENZHEN_AONI_ELECTRONIC_CO._LTD_aoni_webcam_A30_20191119001-video-index0'
+  #   profile:
+  #     width: 640
+  #     height: 480
+  #     fps: 30
+  #   encoding:
+  #     codec: 'jpeg'
+  #     jpeg_quality: 85

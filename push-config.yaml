@@ -1,0 +1,21 @@
+# camera-stream remote push configuration
+#
+# Run this on a camera host, not on the aggregation server. Replace the ingest
+# host address and /dev/video0, then duplicate the camera block as needed.
+
+endpoints:
+  # Reachable server ingest address. Do not use the server bind wildcard here.
+  ingest_api: 'tcp://192.168.5.24:5557'
+
+cameras:
+  - name: 'camera0'
+    driver: 'opencv'
+    device:
+      path: '/dev/v4l/by-id/usb-SHENZHEN_AONI_ELECTRONIC_CO._LTD_aoni_webcam_A30_20191119001-video-index0'
+    profile:
+      width: 640
+      height: 480
+      fps: 30
+    encoding:
+      codec: 'jpeg'
+      jpeg_quality: 85
